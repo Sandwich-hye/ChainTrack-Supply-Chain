@@ -1,0 +1,24 @@
+{
+  "name": "supply-chain-blockchain",
+  "version": "1.0.0",
+  "description": "COMP842 supply-chain tracking MVP — SupplyChain.sol + Hardhat + React/ethers skeleton",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+    "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
+    "seed:local": "hardhat run scripts/seed-demo-data.js --network localhost"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "5.0.0",
+    "hardhat": "2.29.1",
+    "hardhat-gas-reporter": "1.0.10"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "5.0.2",
+    "dotenv": "16.4.7",
+    "ethers": "6.15.0"
+  }
+}

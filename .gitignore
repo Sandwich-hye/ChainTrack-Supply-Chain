@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+frontend/node_modules/
+
+# env / secrets
+.env
+.env.local
+.env.*.local
+
+# hardhat build artifacts
+artifacts/
+cache/
+typechain-types/
+coverage/
+coverage.json
+gas-report.txt
+
+# hardhat ignition local deployments
+ignition/deployments/
+
+# frontend build output
+frontend/dist/
+frontend/build/
+
+# editor / OS
+.DS_Store
+*.log
+.vscode/
+.idea/
