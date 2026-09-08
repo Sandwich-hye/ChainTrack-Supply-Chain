@@ -1,35 +1,32 @@
-/**
- * Seed demo data for the SupplyChain contract.
- *
- * Runs the full one-product lifecycle using separate signer accounts for each
- * role, so a demo / Track Product view has a realistic event history:
- *   createProduct -> recordWarehouseEntry -> recordWarehouseExit ->
- *   recordPickup -> updateTransportLocation (x1-2) -> confirmDelivery
- *
- * Run with:
- *   npx hardhat run scripts/seed-demo-data.js --network localhost
- *
- * SKELETON — Codex (Phase 2) completes the details:
- *  - resolve or deploy the contract
- *  - grant SUPPLIER_ROLE / WAREHOUSE_ROLE / TRANSPORT_ROLE / RETAILER_ROLE to
- *    distinct accounts from the admin account
- *  - execute the lifecycle, printing each transaction hash
- */
-const hre = require("hardhat");
-
+﻿const hre = require('hardhat');
+const config = require('../frontend/src/config/deployment.json');
 async function main() {
-  // TODO(codex): const signers = await hre.ethers.getSigners();
-  // TODO(codex): const [admin, supplier, warehouse, transport, retailer] = signers;
-  // TODO(codex): resolve deployed address (env var or fresh deploy) and attach
-  // TODO(codex): await contract.connect(admin).grantRole(await contract.SUPPLIER_ROLE(), supplier.address);
-  // TODO(codex): ... grant the other three roles ...
-  // TODO(codex): run createProduct / recordWarehouseEntry / recordWarehouseExit /
-  //              recordPickup / updateTransportLocation / confirmDelivery
-  // TODO(codex): console.log each tx.hash
-  throw new Error("seed-demo-data.js skeleton — not implemented yet (Phase 2 / Codex)");
+  const network = await hre.ethers.provider.getNetwork();
+  if (Number(network.chainId) !== config.chainId) throw new Error('Deployment configuration is for a different chain. Deploy first.');
+  if (await hre.ethers.provider.getCode(config.address) === '0x') throw new Error('No deployed contract. Deploy first.');
+  let actors = await hre.ethers.getSigners();
+  if (network.chainId === 11155111n) {
+    const names = ['SUPPLIER_PRIVATE_KEY','WAREHOUSE_PRIVATE_KEY','TRANSPORT_PRIVATE_KEY','RETAILER_PRIVATE_KEY'];
+    if (names.some(name => !process.env[name])) throw new Error('Set all four business-role private keys in the root .env and fund each account with Sepolia ETH.');
+    actors = [actors[0], ...names.map(name => new hre.ethers.Wallet(process.env[name], hre.ethers.provider))];
+  }
+  if (actors.length < 5 || new Set(actors.slice(0,5).map(a => a.address.toLowerCase())).size !== 5) throw new Error('Five distinct funded accounts are required.');
+  const [admin,supplier,warehouse,transport,retailer] = actors;
+  const contract = await hre.ethers.getContractAt('SupplyChain', config.address, admin);
+  const id = BigInt(process.env.DEMO_PRODUCT_ID || '1001'); const tracking = `DEMO-${id}`;
+  try { await contract.getProduct(id); throw new Error('Demo product already exists. Set a new DEMO_PRODUCT_ID.'); }
+  catch (error) { if (!String(error).includes('Product does not exist')) throw error; }
+  async function send(label, promise) { const tx = await promise; const receipt = await tx.wait(); console.log(`${label}: ${receipt.hash} (block ${receipt.blockNumber})`); }
+  const roles = ['SUPPLIER_ROLE','WAREHOUSE_ROLE','TRANSPORT_ROLE','RETAILER_ROLE'];
+  for (let i=0;i<4;i++) await send(`Grant ${roles[i]} to ${actors[i+1].address}`, contract.grantRole(await contract[roles[i]](),actors[i+1].address));
+  await send('Create',contract.connect(supplier).createProduct(id,'Fictional orchard tea',10));
+  await send('Warehouse entry',contract.connect(warehouse).recordWarehouseEntry(id,'DEMO-WH',10));
+  await send('Warehouse exit',contract.connect(warehouse).recordWarehouseExit(id));
+  await send('Pickup',contract.connect(transport).recordPickup(id,tracking,'DEMO-DRIVER'));
+  await send('Location update',contract.connect(transport).updateTransportLocation(id,'Fictional harbour'));
+  await send('Location update',contract.connect(transport).updateTransportLocation(id,'Fictional city depot'));
+  await send('Delivery',contract.connect(retailer).confirmDelivery(id,'DEMO-SHOP',10));
+  const p = await contract.getProduct(id);
+  console.log('Final product:', JSON.stringify(p.toObject(),(_,value) => typeof value === 'bigint' ? value.toString() : value,2));
 }
-
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+main().catch(error => { console.error(error); process.exitCode = 1; });

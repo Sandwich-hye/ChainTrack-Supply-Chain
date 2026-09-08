@@ -1,47 +1,38 @@
-/**
- * Role / AccessControl behaviour.
- *
- * SKELETON — structure only. Test bodies are left for Codex (Phase 2).
- * `it("...")` with no callback is a Mocha *pending* test — it will show as
- * pending, not fail, when running `npx hardhat test`.
- *
- * AccessControl 5.x reverts with the custom error
- * `AccessControlUnauthorizedAccount(address account, bytes32 neededRole)` —
- * assert with `revertedWithCustomError`, not a string match.
- */
-const { expect } = require("chai");
-const { ethers } = require("hardhat");
-
-describe("SupplyChain — roles & access control", function () {
-  // TODO(codex): deploy fixture returning { contract, admin, supplier, warehouse, transport, retailer, outsider }
-
-  describe("admin role bootstrap", function () {
-    it("grants DEFAULT_ADMIN_ROLE to the deployer");
-    it("does not grant any business role to the deployer by default");
+﻿const { expect } = require('chai');
+const { loadFixture } = require('@nomicfoundation/hardhat-network-helpers');
+const { fixture, roles, steps, advance } = require('./helpers');
+describe('SupplyChain roles and access control', function () {
+  it('bootstraps only the admin role on the deployer', async function () {
+    const f = await loadFixture(fixture);
+    expect(await f.contract.hasRole(await f.contract.DEFAULT_ADMIN_ROLE(), f.admin.address)).to.equal(true);
+    for (const role of roles) expect(await f.contract.hasRole(await f.contract[role](), f.admin.address)).to.equal(false);
   });
-
-  describe("role administration", function () {
-    it("lets the admin grant each business role");
-    it("lets the admin revoke a previously granted role");
-    it("reverts when a non-admin tries to grant a role");
-    it("reverts when a non-admin tries to revoke a role");
-  });
-
-  describe("role-gated operations (positive)", function () {
-    it("allows a SUPPLIER_ROLE account to call createProduct");
-    it("allows a WAREHOUSE_ROLE account to call recordWarehouseEntry / recordWarehouseExit");
-    it("allows a TRANSPORT_ROLE account to call recordPickup / updateTransportLocation");
-    it("allows a RETAILER_ROLE account to call confirmDelivery");
-  });
-
-  describe("role-gated operations (negative)", function () {
-    it("rejects createProduct from a non-supplier");
-    it("rejects recordWarehouseEntry / recordWarehouseExit from a non-warehouse account");
-    it("rejects recordPickup / updateTransportLocation from a non-transport account");
-    it("rejects confirmDelivery from a non-retailer");
-  });
-
-  describe("revocation", function () {
-    it("blocks a formerly-authorised account after its role is revoked");
-  });
+  for (let i = 0; i < roles.length; i++) {
+    it(`admin grants and revokes ${roles[i]}`, async function () {
+      const f = await loadFixture(fixture); const role = await f.contract[roles[i]]();
+      expect(await f.contract.hasRole(role, f.actors[i].address)).to.equal(true);
+      await f.contract.revokeRole(role, f.actors[i].address);
+      expect(await f.contract.hasRole(role, f.actors[i].address)).to.equal(false);
+    });
+    for (const method of ['grantRole', 'revokeRole']) it(`non-admin cannot ${method} ${roles[i]}`, async function () {
+      const f = await loadFixture(fixture);
+      for (const actor of [...f.actors, f.outsider]) await expect(f.contract.connect(actor)[method](await f.contract[roles[i]](), f.outsider.address))
+        .to.be.revertedWithCustomError(f.contract, 'AccessControlUnauthorizedAccount').withArgs(actor.address, await f.contract.DEFAULT_ADMIN_ROLE());
+    });
+  }
+  for (let i = 0; i < steps.length; i++) {
+    const [actor, method, args] = steps[i]; const roleName = `${actor.toUpperCase()}_ROLE`;
+    it(`allows the correct role to ${method}`, async function () {
+      const f = await loadFixture(fixture); await advance(f, i - 1);
+      await expect(f.contract.connect(f[actor])[method](...args)).not.to.be.reverted;
+    });
+    it(`rejects every other role and revoked role for ${method}`, async function () {
+      const f = await loadFixture(fixture); await advance(f, i - 1); const role = await f.contract[roleName]();
+      for (const account of [f.admin, ...f.actors, f.outsider].filter(Boolean).filter(a => a.address !== f[actor].address)) {
+        await expect(f.contract.connect(account)[method](...args)).to.be.revertedWithCustomError(f.contract, 'AccessControlUnauthorizedAccount').withArgs(account.address, role);
+      }
+      await f.contract.revokeRole(role, f[actor].address);
+      await expect(f.contract.connect(f[actor])[method](...args)).to.be.revertedWithCustomError(f.contract, 'AccessControlUnauthorizedAccount').withArgs(f[actor].address, role);
+    });
+  }
 });

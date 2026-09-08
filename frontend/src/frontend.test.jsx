@@ -1,0 +1,66 @@
+// @vitest-environment jsdom
+import React from 'react';
+import { describe,it,expect,vi,beforeEach,afterEach } from 'vitest';
+import { render,screen,fireEvent,waitFor,cleanup,renderHook,act } from '@testing-library/react';
+import TransactionForm,{productId,quantity} from './components/TransactionForm';
+import AdminPanel from './components/AdminPanel';
+import WarehouseDashboard from './components/WarehouseDashboard';
+import TransportDashboard from './components/TransportDashboard';
+import TrackProduct from './components/TrackProduct';
+import { useWallet } from './hooks/useWallet';
+import * as service from './services/contractService';
+vi.mock('./services/contractService',async importOriginal => ({...await importOriginal(),getWriteContract:vi.fn(),detectRoles:vi.fn(),trackProduct:vi.fn()}));
+beforeEach(() => { vi.clearAllMocks(); });
+afterEach(() => { cleanup(); delete window.ethereum; });
+describe('dashboard transactions',() => {
+  it('submits exact arguments and shows pending then confirmed hash',async () => {
+    let confirm; const wait = vi.fn(() => new Promise(resolve => {confirm=resolve;}));
+    const createProduct = vi.fn(async () => ({hash:'0xsubmitted',wait})); service.getWriteContract.mockResolvedValue({createProduct});
+    render(<TransactionForm title="Create" method="createProduct" fields={[productId,{name:'name',label:'Name'},quantity]} address="account"/>);
+    for (const [label,value] of [['Product ID','7'],['Name','Tea'],['Quantity','10']]) fireEvent.change(screen.getByLabelText(label),{target:{value}});
+    fireEvent.click(screen.getByText('Create',{selector:'button'}));
+    await waitFor(() => expect(createProduct).toHaveBeenCalledWith(7n,'Tea',10n));
+    expect(screen.getByText('Pending…').matches(':disabled')).toBe(true);
+    await act(async () => confirm({status:1,hash:'0xconfirmed'}));
+    expect(screen.getByText('Transaction confirmed.')).toBeTruthy(); expect(screen.getByText('Transaction: 0xconfirmed')).toBeTruthy();
+  });
+  it('shows a readable rejected-transaction error and restores the form',async () => {
+    service.getWriteContract.mockRejectedValue({code:'ACTION_REJECTED'});
+    render(<TransactionForm title="Exit" method="recordWarehouseExit" fields={[productId]}/>);
+    fireEvent.change(screen.getByLabelText('Product ID'),{target:{value:'1'}}); fireEvent.click(screen.getByText('Exit',{selector:'button'}));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('rejected'));
+    expect(screen.getByText('Exit',{selector:'button'}).disabled).toBe(false);
+  });
+  it('exposes only business roles, one exit field, and no transport status selector',() => {
+    const admin = render(<AdminPanel/>); expect(screen.getAllByRole('option').map(o => o.textContent)).toEqual([...service.BUSINESS_ROLES,...service.BUSINESS_ROLES]); admin.unmount();
+    const warehouse = render(<WarehouseDashboard/>); const exit = screen.getByText('Record warehouse exit',{selector:'button'}).closest('form'); expect(exit.querySelectorAll('input')).toHaveLength(1); warehouse.unmount();
+    render(<TransportDashboard/>); expect(screen.queryByRole('combobox')).toBeNull();
+  });
+});
+describe('wallet events',() => {
+  it('handles multiple roles, account change, wrong chain, disconnection and cleanup',async () => {
+    let accounts = ['0x1111111111111111111111111111111111111111']; let chain = '0x7a69'; const listeners = {};
+    window.ethereum = {request:vi.fn(async ({method}) => method === 'eth_chainId' ? chain : accounts),on:vi.fn((name,fn) => {listeners[name]=fn;}),removeListener:vi.fn()};
+    service.getWriteContract.mockResolvedValue({}); service.detectRoles.mockResolvedValue(['Supplier','Transport']);
+    const {result,unmount} = renderHook(() => useWallet());
+    await waitFor(() => expect(result.current.roles).toEqual(['Supplier','Transport']));
+    accounts = ['0x2222222222222222222222222222222222222222'];
+    await act(async () => listeners.accountsChanged(accounts)); await waitFor(() => expect(result.current.address).toBe(accounts[0]));
+    chain = '0x1'; await act(async () => listeners.chainChanged(chain)); await waitFor(() => expect(result.current.error).toContain('Wrong network')); expect(result.current.roles).toEqual([]);
+    accounts = []; await act(async () => listeners.accountsChanged([])); await waitFor(() => expect(result.current.address).toBeNull());
+    await act(async () => listeners.disconnect()); expect(result.current.roles).toEqual([]);
+    const wallet = window.ethereum; unmount(); expect(wallet.removeListener).toHaveBeenCalledTimes(3);
+  });
+  it('handles absent MetaMask',async () => {
+    const {result} = renderHook(() => useWallet()); await act(async () => result.current.connect()); expect(result.current.error).toContain('Install MetaMask');
+  });
+});
+describe('track product rendering',() => {
+  it('renders every event field and routes tracking searches correctly',async () => {
+    service.trackProduct.mockResolvedValue({product:{name:'Tea',productId:1n,quantity:10n,currentStatus:5n,supplier:'supplier-wallet'},timeline:[{event:'TransportPickup',transactionHash:'0xhash',blockNumber:2,transactionIndex:0,index:0,fields:{productId:'1',transportCompany:'transport-wallet',trackingNumber:'TRACK',driverId:'DRIVER',timestamp:'100'}}]});
+    render(<TrackProduct/>); fireEvent.change(screen.getByLabelText('Search by'),{target:{value:'trackingNumber'}}); fireEvent.change(screen.getByLabelText('Search value'),{target:{value:'TRACK'}}); fireEvent.click(screen.getByText('Search',{selector:'button'}));
+    await waitFor(() => expect(screen.getByText('TransportPickup')).toBeTruthy());
+    expect(service.trackProduct).toHaveBeenCalledWith('trackingNumber','TRACK');
+    for (const value of ['transport-wallet','TRACK','DRIVER','Transaction: 0xhash']) expect(screen.getByText(value)).toBeTruthy();
+  });
+});
