@@ -1,5 +1,5 @@
 ﻿import { describe,it,expect,vi } from 'vitest';
-import { compareLogs,queryHistory,trackProduct,uint,toReadableError,detectRoles,ROLE_IDS,EVENTS } from './contractService';
+import { compareLogs,queryHistory,trackProduct,uint,toReadableError,detectRoles,ROLE_IDS,EVENTS,generateProductId,generateTrackingNumber } from './contractService';
 import { Interface } from 'ethers';
 import { ABI } from './contractService';
 describe('contract service',() => {
@@ -36,5 +36,23 @@ describe('contract service',() => {
     expect(toReadableError({code:'ACTION_REJECTED'})).toContain('rejected');
     expect(toReadableError({reason:'Quantity mismatch'})).toContain('original product quantity');
     expect(toReadableError({reason:'Invalid status for delivery'})).toContain('lifecycle stage');
+  });
+  it('generates an unused uint256 Product ID after probing the contract',async () => {
+    const words = [new Uint32Array([0,0,0,7]),new Uint32Array([0,0,0,8])];
+    const contract = {getProduct:vi.fn()
+      .mockResolvedValueOnce({productId:7n})
+      .mockRejectedValueOnce({reason:'Product does not exist'})};
+    expect(await generateProductId(contract,{getRandomValues:array => { array.set(words.shift()); return array; }})).toBe(8n);
+    expect(contract.getProduct.mock.calls.map(([id]) => id)).toEqual([7n,8n]);
+  });
+  it('generates an application tracking number and probes uniqueness',async () => {
+    const contract = {getProductIdByTrackingNumber:vi.fn()
+      .mockResolvedValueOnce(1001n)
+      .mockRejectedValueOnce({reason:'Unknown tracking number'})};
+    const value = await generateTrackingNumber(7n,contract);
+    expect(value).toMatch(/^SC-\d+-[A-F0-9]{8}-7-2$/);
+    expect(contract.getProductIdByTrackingNumber.mock.calls.map(([tracking]) => tracking)).toEqual([
+      expect.stringMatching(/^SC-\d+-[A-F0-9]{8}-7$/),value,
+    ]);
   });
 });

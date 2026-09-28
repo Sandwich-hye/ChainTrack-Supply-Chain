@@ -7,6 +7,7 @@ import AdminPanel from './components/AdminPanel';
 import WarehouseDashboard from './components/WarehouseDashboard';
 import TransportDashboard from './components/TransportDashboard';
 import TrackProduct from './components/TrackProduct';
+import ShipmentJourney from './components/ShipmentJourney';
 import { useWallet } from './hooks/useWallet';
 import * as service from './services/contractService';
 vi.mock('./services/contractService',async importOriginal => ({...await importOriginal(),getWriteContract:vi.fn(),detectRoles:vi.fn(),trackProduct:vi.fn()}));
@@ -33,8 +34,15 @@ describe('dashboard transactions',() => {
   });
   it('exposes only business roles, one exit field, and no transport status selector',() => {
     const admin = render(<AdminPanel/>); expect(screen.getAllByRole('option').map(o => o.textContent)).toEqual([...service.BUSINESS_ROLES,...service.BUSINESS_ROLES]); admin.unmount();
-    const warehouse = render(<WarehouseDashboard/>); const exit = screen.getByText('Record warehouse exit',{selector:'button'}).closest('form'); expect(exit.querySelectorAll('input')).toHaveLength(1); warehouse.unmount();
+    const warehouse = render(<WarehouseDashboard selectedProduct={{product:{productId:1n,name:'Classic Cotton T-Shirt',quantity:20n,currentStatus:1n,supplier:'supplier',trackingNumber:''}}}/>); const exit = screen.getByText('Record Warehouse Exit',{selector:'button'}).closest('form'); expect(exit.querySelectorAll('input')).toHaveLength(0); warehouse.unmount();
     render(<TransportDashboard/>); expect(screen.queryByRole('combobox')).toBeNull();
+  });
+  it('requires full quantity confirmation before submitting a receipt',async () => {
+    const entry = vi.fn(async () => ({hash:'0xentry',wait:vi.fn(async () => ({status:1,hash:'0xentry'}))})); service.getWriteContract.mockResolvedValue({recordWarehouseEntry:entry});
+    render(<TransactionForm title="Confirm" method="recordWarehouseEntry" fields={[{name:'warehouseId',label:'Warehouse Reference'}]} confirmation="Full quantity received" prepare={async args => [1n,args[0],20n]} address="account"/>);
+    fireEvent.change(screen.getByLabelText('Warehouse Reference'),{target:{value:'Auckland Clothing Distribution Centre'}}); fireEvent.click(screen.getByText('Confirm',{selector:'button'}));
+    expect(entry).not.toHaveBeenCalled(); fireEvent.click(screen.getByLabelText('Full quantity received')); fireEvent.click(screen.getByText('Confirm',{selector:'button'}));
+    await waitFor(() => expect(entry).toHaveBeenCalledWith(1n,'Auckland Clothing Distribution Centre',20n));
   });
 });
 describe('wallet events',() => {
@@ -56,11 +64,16 @@ describe('wallet events',() => {
   });
 });
 describe('track product rendering',() => {
+  it('renders the six-stage shipment journey without a percentage',() => {
+    const view = render(<ShipmentJourney status={3n}/>); expect(screen.getByText('Stage 4 of 6')).toBeTruthy(); expect(screen.getByText('In Transit')).toBeTruthy(); expect(screen.queryByText(/%/)).toBeNull();
+    view.unmount(); render(<ShipmentJourney status={5n}/>); expect(screen.getByText('Stage 6 of 6')).toBeTruthy(); expect(screen.getByText('Delivered')).toBeTruthy();
+  });
   it('renders every event field and routes tracking searches correctly',async () => {
     service.trackProduct.mockResolvedValue({product:{name:'Tea',productId:1n,quantity:10n,currentStatus:5n,supplier:'supplier-wallet'},timeline:[{event:'TransportPickup',transactionHash:'0xhash',blockNumber:2,transactionIndex:0,index:0,fields:{productId:'1',transportCompany:'transport-wallet',trackingNumber:'TRACK',driverId:'DRIVER',timestamp:'100'}}]});
-    render(<TrackProduct/>); fireEvent.change(screen.getByLabelText('Search by'),{target:{value:'trackingNumber'}}); fireEvent.change(screen.getByLabelText('Search value'),{target:{value:'TRACK'}}); fireEvent.click(screen.getByText('Search',{selector:'button'}));
+    render(<TrackProduct selectedProduct={{product:{productId:1n}}}/>); fireEvent.change(screen.getByLabelText('Search by'),{target:{value:'trackingNumber'}}); fireEvent.change(screen.getByLabelText('Search value'),{target:{value:'TRACK'}}); fireEvent.click(screen.getByText('Search',{selector:'button'}));
     await waitFor(() => expect(screen.getByText('TransportPickup')).toBeTruthy());
     expect(service.trackProduct).toHaveBeenCalledWith('trackingNumber','TRACK');
-    for (const value of ['transport-wallet','TRACK','DRIVER','Transaction: 0xhash']) expect(screen.getByText(value)).toBeTruthy();
+    for (const value of ['transport-wallet','TRACK','DRIVER','Driver Reference','Transaction: 0xhash']) expect(screen.getByText(value)).toBeTruthy();
+    expect(screen.getByText('Selected',{selector:'button'}).disabled).toBe(true);
   });
 });

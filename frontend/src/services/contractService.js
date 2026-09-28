@@ -8,7 +8,7 @@ export const CHAIN_ID = Number(env.VITE_CHAIN_ID || deployment.chainId);
 export const DEPLOYMENT_BLOCK = Number(env.VITE_DEPLOYMENT_BLOCK ?? deployment.deploymentBlock);
 export const BUSINESS_ROLES = ['Supplier','Warehouse','Transport','Retailer'];
 export const ROLE_IDS = Object.fromEntries(['Admin',...BUSINESS_ROLES].map(role => [role,role === 'Admin' ? ZeroHash : id(`${role.toUpperCase()}_ROLE`)]));
-export const STATUSES = ['Created','In warehouse','Dispatched from warehouse','Picked up','In transit','Delivered'];
+export const STATUSES = ['Created','In Warehouse','Dispatched','Picked Up','In Transit','Delivered'];
 export const EVENTS = ['ProductCreated','WarehouseEntry','WarehouseExit','TransportPickup','TransportStatusUpdated','GoodsDelivered'];
 let readProvider;
 function validateConfig() {
@@ -21,6 +21,37 @@ export function uint(value, label = 'Product ID', positive = false) {
   const n = BigInt(value);
   if (n > MaxUint256 || (positive && n === 0n)) throw new Error(`${label} must be ${positive ? 'greater than zero and ' : ''}within uint256 range.`);
   return n;
+}
+function hasRevertReason(error, reason) {
+  return [error?.reason, error?.shortMessage, error?.message].some(value => typeof value === 'string' && value.includes(reason));
+}
+export async function generateProductId(contract, random = globalThis.crypto) {
+  contract ||= await getReadContract();
+  if (!random?.getRandomValues) throw new Error('Secure browser randomness is unavailable.');
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const words = random.getRandomValues(new Uint32Array(4));
+    const candidate = Array.from(words).reduce((value, word) => (value << 32n) | BigInt(word), 0n);
+    if (candidate === 0n) continue;
+    try { await contract.getProduct(candidate); }
+    catch (error) {
+      if (hasRevertReason(error, 'Product does not exist')) return candidate;
+      throw error;
+    }
+  }
+  throw new Error('Could not find an unused Product ID. Try again.');
+}
+export async function generateTrackingNumber(productId, contract) {
+  contract ||= await getReadContract();
+  const base = `SC-${CHAIN_ID}-${CONTRACT_ADDRESS.slice(2,10).toUpperCase()}-${uint(productId).toString()}`;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const candidate = attempt ? `${base}-${attempt + 1}` : base;
+    try { await contract.getProductIdByTrackingNumber(candidate); }
+    catch (error) {
+      if (hasRevertReason(error, 'Unknown tracking number')) return candidate;
+      throw error;
+    }
+  }
+  throw new Error('Could not find an unused tracking number. Try again.');
 }
 export async function getProvider() {
   if (!window.ethereum) throw new Error('Install MetaMask to connect a wallet.');
@@ -44,6 +75,12 @@ export async function getWriteContract(expectedAddress) {
   if (expectedAddress && accounts[0].toLowerCase() !== expectedAddress.toLowerCase()) throw new Error('Wallet account changed. Retry with the current account.');
   if (await provider.getCode(CONTRACT_ADDRESS) === '0x') throw new Error('Contract not found on this network.');
   return new Contract(CONTRACT_ADDRESS,ABI,await provider.getSigner(accounts[0]));
+}
+export async function requireFreshProduct(selectedProduct, allowedStatuses) {
+  if (!selectedProduct?.product) throw new Error('Select a product before continuing.');
+  const product = await (await getReadContract()).getProduct(selectedProduct.product.productId);
+  if (!allowedStatuses.includes(Number(product.currentStatus))) throw new Error('This action is not allowed at the current lifecycle stage. Refresh the product.');
+  return product;
 }
 export async function detectRoles(contract,address) {
   const entries = await Promise.all(Object.entries(ROLE_IDS).map(async ([name,role]) => [name,await contract.hasRole(role,address)]));
