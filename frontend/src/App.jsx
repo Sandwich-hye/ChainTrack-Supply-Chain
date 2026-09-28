@@ -20,9 +20,8 @@ export default function App() {
   const refreshProduct = useCallback(async (productId,expectedContext) => { const result = await trackProduct('productId',productId.toString()); if (currentContext.current === expectedContext) setSelectedProduct(result); return result; },[]);
   const dashboards = {Supplier:SupplierDashboard,Warehouse:WarehouseDashboard,Transport:TransportDashboard,Retailer:RetailerDashboard,Admin:AdminPanel};
   return <div className="app">
-    <header className="page-header"><div><p className="eyebrow">Clothing supply chain</p><h1>Clothing Supply Chain Tracker</h1><p className="muted">Follow clothing shipments from supplier to retail store.</p></div></header>
+    <header className="page-header"><div><p className="eyebrow">Clothing supply chain</p><h1>Clothing Supply Chain Tracker</h1></div></header>
     <ConnectWallet wallet={wallet}/>
-    <main><TrackProduct selectedProduct={selectedProduct} selectProduct={selectProduct} contextKey={contextKey} deploymentKey={deploymentKey}/>{wallet.roles.map(role => { const Dashboard = dashboards[role]; return <Dashboard key={`${wallet.address}-${wallet.chainId}-${role}`} address={wallet.address} selectedProduct={selectedProduct} refreshProduct={refreshProduct} contextKey={contextKey}/>; })}</main>
-    <footer>Product records and event history are publicly available on the configured network.</footer>
+    <main><TrackProduct selectedProduct={selectedProduct} selectProduct={selectProduct} contextKey={contextKey} deploymentKey={deploymentKey}/>{wallet.roles.map(role => { const Dashboard = dashboards[role]; return <Dashboard key={`${wallet.address}-${wallet.chainId}-${role}`} address={wallet.address} selectedProduct={selectedProduct} selectProduct={selectProduct} refreshProduct={refreshProduct} contextKey={contextKey}/>; })}</main>
   </div>;
 }

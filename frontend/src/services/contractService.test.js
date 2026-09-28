@@ -1,5 +1,5 @@
 ﻿import { describe,it,expect,vi } from 'vitest';
-import { compareLogs,queryHistory,trackProduct,uint,toReadableError,detectRoles,ROLE_IDS,EVENTS,generateProductId,generateTrackingNumber } from './contractService';
+import { compareLogs,queryHistory,trackProduct,listSupplierProducts,uint,toReadableError,detectRoles,ROLE_IDS,EVENTS,generateProductId,generateTrackingNumber } from './contractService';
 import { Interface } from 'ethers';
 import { ABI } from './contractService';
 describe('contract service',() => {
@@ -20,6 +20,13 @@ describe('contract service',() => {
     expect(await trackProduct('productId','1',contract,10)).toEqual(await trackProduct('trackingNumber','TRACK',contract,10));
     expect(contract.getProduct).toHaveBeenCalledWith(1n,{blockTag:10});
     expect(contract.getProductIdByTrackingNumber).toHaveBeenCalledWith('TRACK');
+  });
+  it('lists products from supplier-filtered ProductCreated events and current reads',async () => {
+    const log = {blockNumber:10,transactionIndex:0,index:0,args:{productId:7n}};
+    const contract = {runner:{provider:{getBlockNumber:async () => 10}},filters:{ProductCreated:vi.fn((...args) => args)},queryFilter:vi.fn(async () => [log]),getProduct:vi.fn(async productId => ({productId}))};
+    expect(await listSupplierProducts('supplier',contract,10,10)).toEqual([{productId:7n}]);
+    expect(contract.filters.ProductCreated).toHaveBeenCalledWith(null,'supplier');
+    expect(contract.getProduct).toHaveBeenCalledWith(7n,{blockTag:10});
   });
   it('keeps all roles on a multi-role account',async () => {
     expect(await detectRoles({hasRole:async role => [ROLE_IDS.Admin,ROLE_IDS.Supplier,ROLE_IDS.Transport].includes(role)},'account')).toEqual(['Admin','Supplier','Transport']);

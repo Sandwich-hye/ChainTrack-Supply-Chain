@@ -6,14 +6,29 @@ import TransactionForm,{productId,quantity} from './components/TransactionForm';
 import AdminPanel from './components/AdminPanel';
 import WarehouseDashboard from './components/WarehouseDashboard';
 import TransportDashboard from './components/TransportDashboard';
+import SupplierDashboard from './components/SupplierDashboard';
 import TrackProduct from './components/TrackProduct';
 import ShipmentJourney from './components/ShipmentJourney';
 import { useWallet } from './hooks/useWallet';
 import * as service from './services/contractService';
-vi.mock('./services/contractService',async importOriginal => ({...await importOriginal(),getWriteContract:vi.fn(),detectRoles:vi.fn(),trackProduct:vi.fn()}));
+vi.mock('./services/contractService',async importOriginal => ({...await importOriginal(),getWriteContract:vi.fn(),detectRoles:vi.fn(),trackProduct:vi.fn(),generateProductId:vi.fn(),listSupplierProducts:vi.fn()}));
 beforeEach(() => { vi.clearAllMocks(); });
 afterEach(() => { cleanup(); delete window.ethereum; });
 describe('dashboard transactions',() => {
+  it('keeps Product ID automatic and lets a supplier select a blockchain product',async () => {
+    service.generateProductId.mockResolvedValue(42n); service.listSupplierProducts.mockResolvedValue([{productId:42n,name:'Classic Denim Jacket',quantity:10n,currentStatus:0n,supplier:'supplier'}]);
+    const createProduct = vi.fn(async () => ({hash:'0xcreate',wait:vi.fn(async () => ({status:1,hash:'0xcreate'}))})); service.getWriteContract.mockResolvedValue({createProduct});
+    service.trackProduct.mockResolvedValue({product:{productId:42n,name:'Classic Denim Jacket',quantity:10n,currentStatus:0n,supplier:'supplier',trackingNumber:''},timeline:[]});
+    const refreshProduct = vi.fn(async () => undefined); const selectProduct = vi.fn();
+    render(<SupplierDashboard address="supplier" refreshProduct={refreshProduct} selectProduct={selectProduct} contextKey="supplier-context"/>);
+    await waitFor(() => expect(screen.getByText('Classic Denim Jacket')).toBeTruthy());
+    expect(screen.queryByLabelText('Product ID')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Product Name'),{target:{value:'Classic Denim Jacket'}}); fireEvent.change(screen.getByLabelText('Quantity'),{target:{value:'10'}}); fireEvent.click(screen.getByText('Create Product',{selector:'button'}));
+    await waitFor(() => expect(createProduct).toHaveBeenCalledWith(42n,'Classic Denim Jacket',10n));
+    await waitFor(() => expect(screen.getByText('Created Product ID:')).toBeTruthy());
+    fireEvent.click(screen.getByText('Classic Denim Jacket'));
+    await waitFor(() => expect(selectProduct).toHaveBeenCalled());
+  });
   it('submits exact arguments and shows pending then confirmed hash',async () => {
     let confirm; const wait = vi.fn(() => new Promise(resolve => {confirm=resolve;}));
     const createProduct = vi.fn(async () => ({hash:'0xsubmitted',wait})); service.getWriteContract.mockResolvedValue({createProduct});
@@ -75,5 +90,13 @@ describe('track product rendering',() => {
     expect(service.trackProduct).toHaveBeenCalledWith('trackingNumber','TRACK');
     for (const value of ['transport-wallet','TRACK','DRIVER','Driver Reference','Transaction: 0xhash']) expect(screen.getByText(value)).toBeTruthy();
     expect(screen.getByText('Selected',{selector:'button'}).disabled).toBe(true);
+  });
+  it('clears a search result when the wallet context changes',async () => {
+    service.trackProduct.mockResolvedValue({product:{name:'Tea',productId:1n,quantity:10n,currentStatus:5n,supplier:'supplier-wallet'},timeline:[{event:'TransportPickup',transactionHash:'0xhash',blockNumber:2,transactionIndex:0,index:0,fields:{productId:'1',trackingNumber:'TRACK',driverId:'DRIVER',timestamp:'100'}}]});
+    const view = render(<TrackProduct contextKey="account-one"/>); fireEvent.change(screen.getByLabelText('Search value'),{target:{value:'1'}}); fireEvent.click(screen.getByText('Search',{selector:'button'}));
+    await waitFor(() => expect(screen.getByText('TransportPickup')).toBeTruthy());
+    view.rerender(<TrackProduct contextKey="account-two"/>);
+    await waitFor(() => expect(screen.getByText('No product selected')).toBeTruthy());
+    expect(screen.queryByText('TransportPickup')).toBeNull();
   });
 });

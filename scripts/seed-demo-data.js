@@ -19,13 +19,13 @@ async function main() {
   async function send(label, promise) { const tx = await promise; const receipt = await tx.wait(); console.log(`${label}: ${receipt.hash} (block ${receipt.blockNumber})`); }
   const roles = ['SUPPLIER_ROLE','WAREHOUSE_ROLE','TRANSPORT_ROLE','RETAILER_ROLE'];
   for (let i=0;i<4;i++) await send(`Grant ${roles[i]} to ${actors[i+1].address}`, contract.grantRole(await contract[roles[i]](),actors[i+1].address));
-  await send('Create',contract.connect(supplier).createProduct(id,'Fictional orchard tea',10));
-  await send('Warehouse entry',contract.connect(warehouse).recordWarehouseEntry(id,'DEMO-WH',10));
+  await send('Create',contract.connect(supplier).createProduct(id,'Classic Denim Jacket',10));
+  await send('Warehouse entry',contract.connect(warehouse).recordWarehouseEntry(id,'Auckland Clothing Distribution Centre',10));
   await send('Warehouse exit',contract.connect(warehouse).recordWarehouseExit(id));
-  await send('Pickup',contract.connect(transport).recordPickup(id,tracking,'DEMO-DRIVER'));
-  await send('Location update',contract.connect(transport).updateTransportLocation(id,'Fictional harbour'));
-  await send('Location update',contract.connect(transport).updateTransportLocation(id,'Fictional city depot'));
-  await send('Delivery',contract.connect(retailer).confirmDelivery(id,'DEMO-SHOP',10));
+  await send('Pickup',contract.connect(transport).recordPickup(id,tracking,'DRV-DEMO-01'));
+  await send('Location update',contract.connect(transport).updateTransportLocation(id,'Auckland Distribution Hub'));
+  await send('Location update',contract.connect(transport).updateTransportLocation(id,'Auckland CBD'));
+  await send('Delivery',contract.connect(retailer).confirmDelivery(id,'Queen Street Clothing Store',10));
   const p = await contract.getProduct(id);
   console.log('Final product:', JSON.stringify(p.toObject(),(_,value) => typeof value === 'bigint' ? value.toString() : value,2));
 }

@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { trackProduct, toReadableError } from '../services/contractService';
 import StatusBadge from './StatusBadge';
 import ProductOverview from './ProductOverview';
@@ -15,11 +15,13 @@ const eventPresentation = {
 const fieldLabels = {productId:'Product ID',name:'Product name',supplier:'Supplier',quantity:'Quantity',warehouse:'Warehouse account',warehouseId:'Warehouse Reference',transportCompany:'Transport company',trackingNumber:'Tracking number',driverId:'Driver Reference',location:'Location',retailer:'Retailer',shopId:'Store Reference',receivedQuantity:'Received quantity',timestamp:'Recorded at',status:'Status'};
 export default function TrackProduct({selectedProduct,selectProduct,contextKey}) {
   const [mode,setMode] = useState('productId'); const [query,setQuery] = useState(''); const [result,setResult] = useState(null); const [pending,setPending] = useState(false); const [error,setError] = useState('');
+  const requestId = useRef(0); const previousContext = useRef(contextKey);
+  useEffect(() => { if (previousContext.current === contextKey) return; previousContext.current = contextKey; requestId.current += 1; setResult(null); setQuery(''); setError(''); setPending(false); },[contextKey]);
   async function search(event) {
-    event.preventDefault(); setPending(true); setError(''); setResult(null);
-    try { const found = await trackProduct(mode,query); setResult(found); } catch (e) { console.error('Product search failed',e); setError(toReadableError(e)); } finally { setPending(false); }
+    event.preventDefault(); const currentRequest = ++requestId.current; setPending(true); setError(''); setResult(null);
+    try { const found = await trackProduct(mode,query); if (currentRequest !== requestId.current) return; setResult(found); } catch (e) { if (currentRequest !== requestId.current) return; console.error('Product search failed',e); setError(toReadableError(e)); } finally { if (currentRequest === requestId.current) setPending(false); }
   }
-  return <section className="tracking-section"><div className="section-heading"><p className="eyebrow">Product visibility</p><h2>Track product</h2><p className="muted">Search product records and shipment history. No wallet connection required.</p></div>
+  return <section className="tracking-section"><div className="section-heading"><p className="eyebrow">Product visibility</p><h2>Track product</h2><p className="muted">Search by Product ID or Tracking Number.</p></div>
     <form className="search-form" onSubmit={search}><fieldset disabled={pending}><label>Search by<select value={mode} onChange={e => setMode(e.target.value)}><option value="productId">Product ID</option><option value="trackingNumber">Tracking number</option></select></label><label className="search-value">Search value<input required placeholder={mode === 'productId' ? 'Enter a product ID' : 'Enter a tracking number'} value={query} onChange={e => setQuery(e.target.value)}/></label><button>{pending ? 'Searching…' : 'Search'}</button></fieldset></form>
     {error && <p role="alert">{error}</p>}
     {pending && <p className="notice-pending" role="status">Loading product record and event history…</p>}

@@ -53,6 +53,18 @@ export async function generateTrackingNumber(productId, contract) {
   }
   throw new Error('Could not find an unused tracking number. Try again.');
 }
+export async function listSupplierProducts(supplier, contract, fromBlock = DEPLOYMENT_BLOCK, toBlock) {
+  contract ||= await getReadContract();
+  const end = toBlock ?? await contract.runner.provider.getBlockNumber();
+  const logs = [];
+  const filter = contract.filters.ProductCreated(null,supplier);
+  for (let start = fromBlock; start <= end; start += 500) {
+    const stop = Math.min(start + 499,end);
+    logs.push(...await contract.queryFilter(filter,start,stop));
+  }
+  const productIds = [...new Set(logs.sort(compareLogs).map(log => log.args.productId.toString()))];
+  return Promise.all(productIds.map(productId => contract.getProduct(BigInt(productId),{blockTag:end})));
+}
 export async function getProvider() {
   if (!window.ethereum) throw new Error('Install MetaMask to connect a wallet.');
   return new BrowserProvider(window.ethereum);

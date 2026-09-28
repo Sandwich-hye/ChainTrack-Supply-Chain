@@ -1,254 +1,340 @@
-﻿# Supply Chain Blockchain 鈥?MVP v1
+# Clothing Supply Chain Tracker
 
-COMP842 Applied Blockchains and Cryptocurrencies 鈥?group project.
+## 1. Project Overview
 
-A minimal, publicly-verifiable supply-chain tracking system: a supplier registers
-a product, a warehouse records entry/exit, a transport company records pickup and
-location updates, and a retailer confirms delivery. Every step is written directly
-to a smart contract by the participant's own wallet and preserved as an
-append-only blockchain event.
+The Clothing Supply Chain Tracker is a focused blockchain MVP for following one clothing shipment through four operational roles:
 
-> **Status:** Phase 2 implemented. `SupplyChain.sol` remains approved and unchanged. Tests and
-> the React frontend are functional; see Phase 2 operation and verification below.
-
----
-
-## Two-layer architecture
-
-```
-React frontend + ethers.js v6 + MetaMask
-        |  direct signed transactions / reads
-        v
-   SupplyChain.sol   (OpenZeppelin AccessControl)
-     - mutable current Product state
-     - append-only event logs = history
-        |
-        v
-Hardhat local network (development / testing)
-Sepolia testnet       (public-verifiability demo)
+```text
+Supplier → Warehouse → Transport → Retailer
 ```
 
-There are exactly two layers: the client (browser + MetaMask) and the contract.
-Reads and writes go straight from the user's wallet to the chain.
+The React frontend reads the current product record and the ordered blockchain event history. Public visitors can search by Product ID or Tracking Number without connecting a wallet. Role holders can connect MetaMask to submit the operations allowed for their role.
 
-### Why there is no backend in the MVP
+This is an academic-project-scale demonstration of a shared shipment record, not a commercial inventory or enterprise resource planning platform.
 
-A REST API, database, or off-chain event indexer would add operational surface and
-a trusted intermediary without changing what the demo proves. For a single-product
-scope the contract itself is the source of truth, and history is reconstructed
-live in the browser from events via `queryFilter`. A backend/indexing layer is
-noted as future work for production scale, not a gap in the MVP.
+## 2. Why Clothing Supply Chain
 
----
+Clothing provides a concrete, easy-to-demonstrate shipment: a supplier registers a garment product, a warehouse receives and dispatches it, a transport role records movement, and a retailer confirms delivery. Product name, quantity, location, store reference, and shipment status make each handoff visible without requiring a larger business system.
 
-## Role-based write permissions
+## 3. User Roles
 
-Written with OpenZeppelin `AccessControl`. Four business roles:
+| Role | Current capabilities |
+| --- | --- |
+| **Admin** | Grants and revokes the four business roles for wallet accounts. The deploying account receives the contract's admin role. |
+| **Supplier** | Creates a product with a generated unused Product ID, name, and positive quantity, then reviews products created by the connected Supplier account in **My Products**. |
+| **Warehouse** | Records entry using the stored product quantity, then records warehouse exit. |
+| **Transport** | Records pickup with an automatically generated unused Tracking Number and driver reference, then records one or more location updates. |
+| **Retailer** | Confirms delivery using the product's stored quantity and a store reference. |
+| **Public viewer** | Searches by Product ID or Tracking Number and reads the current Product Overview, Shipment Journey, and Event History. A wallet is not required for public reads. |
 
-| Role             | Allowed operations                                    |
-|------------------|-------------------------------------------------------|
-| `SUPPLIER_ROLE`  | `createProduct`                                       |
-| `WAREHOUSE_ROLE` | `recordWarehouseEntry`, `recordWarehouseExit`         |
-| `TRANSPORT_ROLE` | `recordPickup`, `updateTransportLocation`             |
-| `RETAILER_ROLE`  | `confirmDelivery`                                     |
+The contract enforces write permissions with OpenZeppelin `AccessControl`. The frontend detects the connected account's roles and only renders the corresponding role dashboards.
 
-The deployer receives `DEFAULT_ADMIN_ROLE` in the constructor and manages
-participants with the built-in `grantRole()` / `revokeRole()`. There are no custom
-registration functions.
+## 4. Supply Chain Workflow
 
-Single admin (the deployer), no multi-sig 鈥?documented as a known limitation and
-future work.
+The UI presents the six lifecycle stages as:
 
----
-
-## Public-read visibility on Sepolia
-
-`AccessControl` restricts **state-changing** functions only. On a public network
-such as Sepolia, the current product state and all event logs remain **publicly
-observable** by anyone.
-
-- Wallet connection and role-aware dashboards are **UI behaviour**, not
-  confidentiality controls.
-- The `products` mapping is `private` purely for API encapsulation 鈥?this is
-  **not** a confidentiality claim.
-- Real read-confidentiality would require a permissioned network, or
-  encryption / keeping sensitive data off-chain.
-
----
-
-## Mutable current state vs. immutable historical log
-
-- The `Product` struct stores **mutable current state** 鈥?notably
-  `currentStatus`, which is updated in place as the shipment progresses.
-- Historical supply-chain records are **append-only blockchain event logs**.
-- No function can modify or delete an already emitted event.
-- The complete audit trail is reconstructed from the **ordered event stream**,
-  not from the current `Product` struct.
-- There is intentionally no on-chain `HistoryRecord[]` array.
-
-This is deliberately **not** a claim that "nothing is ever updated".
-
----
-
-## Scope
-
-- **One product = one shipment = one tracking number.**
-- No partial shipments.
-- No multi-leg transport.
-- `Status.Delivered` is terminal 鈥?no return / refund flow.
-
-Lifecycle:
-
-```
-Created -> InWarehouse -> DispatchedFromWarehouse -> PickedUp -> InTransit -> Delivered
+```text
+Created → In Warehouse → Dispatched → Picked Up → In Transit → Delivered
 ```
 
----
+1. **Created** — the Supplier registers a new product. The contract stores its name, quantity, supplier address, creation time, and initial status.
+2. **In Warehouse** — the Warehouse records receipt using the product's existing quantity. A partial or mismatched quantity is rejected.
+3. **Dispatched** — the Warehouse records exit. The contract uses the stored quantity and does not ask for a second quantity value.
+4. **Picked Up** — the Transport role assigns a unique Tracking Number and records the driver reference.
+5. **In Transit** — the Transport role records a location such as Auckland CBD. The contract permits another legitimate location update while the shipment is moving.
+6. **Delivered** — the Retailer confirms the full stored quantity and supplies a store reference. Delivered is terminal in this contract.
 
-## Local Hardhat development vs. Sepolia demo
+## 5. Main Features
 
-- **Local Hardhat network** 鈥?used for the live end-to-end demo and the automated
-  test suite. Fast, free, disposable accounts, deterministic.
-- **Sepolia testnet** 鈥?used once to prove public verifiability: deploy, run the
-  seed script, and show the transactions and events on Etherscan.
+- Role-based blockchain operations for Admin, Supplier, Warehouse, Transport, and Retailer.
+- Automatic Product ID generation when Create Product is submitted, using secure browser randomness and an on-chain existence check. The ID is not a user input.
+- Automatic Tracking Number generation using the configured chain, contract, and product context, with an on-chain uniqueness check.
+- Product selection shared between Track Product and the role dashboards.
+- Supplier **My Products** list reconstructed from `ProductCreated` events and current Product reads.
+- Fresh on-chain product reads before role actions, so downstream quantity comes from the selected Product.
+- Product Overview showing Product ID, quantity, supplier, Tracking Number, and current status.
+- Shipment Journey showing the six lifecycle stages and the current stage number.
+- Event History reconstructed from ordered contract events.
+- Search by Product ID.
+- Search by Tracking Number and resolution back to the Product ID.
+- Wallet, account, role, network, loading, error, and disconnection states.
+- Public tracking reads without requiring MetaMask.
 
----
+## 6. Blockchain Architecture
 
-## Install and compile
-
-Requirements: Node.js 18+ and npm.
-
-```bash
-cd supply-chain-blockchain
-npm install
-npx hardhat compile
+```text
+React/Vite frontend
+        ↓
+ethers.js v6
+        ↓
+SupplyChain.sol
+        ↓
+Ethereum-compatible network
 ```
 
-Run the test suite:
+The frontend uses ethers.js to read from a JSON-RPC provider and to submit signed transactions through MetaMask. MetaMask is needed for interactive browser writes and role detection; it is not needed for public product searches. The frontend is a client application and is not itself a decentralized storage layer.
 
-```bash
-npx hardhat test
+Hardhat Local is the development and automated-integration network. Sepolia is supported by the deployment configuration for a public-network demonstration when suitable RPC endpoints, accounts, and funds are supplied through environment variables.
+
+The frontend does not use a backend or event indexer. It queries the contract's event logs directly, bounds log requests to 500-block ranges, and orders records by block number, transaction index, and log index.
+
+## 7. Why Blockchain?
+
+Blockchain is useful for this scenario when separate organizational roles need to share an auditable lifecycle record without one participant owning the only authoritative database. Each state-changing handoff produces an event that can be read publicly and ordered from the chain.
+
+A conventional database would be simpler for a single trusted organization. The blockchain adds value here only when multiple parties need a shared record and independent visibility into the handoffs. This MVP keeps the scope deliberately small: one product is one shipment, with one Tracking Number, no partial shipments, and no multi-leg transport.
+
+## 8. Smart Contract / On-chain Records
+
+The contract is [`contracts/SupplyChain.sol`](contracts/SupplyChain.sol). It stores mutable current state in a `Product` struct:
+
+```text
+productId, name, quantity, supplier, createdAt,
+currentStatus, trackingNumber
 ```
 
-Run a local node and deploy (scripts completed in Phase 2):
+The Solidity enum names are:
 
-```bash
-npx hardhat node
-npx hardhat run scripts/deploy.js --network localhost
-npx hardhat run scripts/seed-demo-data.js --network localhost
+```text
+Created
+InWarehouse
+DispatchedFromWarehouse
+PickedUp
+InTransit
+Delivered
 ```
 
-### Environment
+### State-changing operations
 
-Copy `.env.example` to `.env` and fill in values. Never commit `.env`.
-RPC URLs, private keys and API keys are read from the environment only 鈥?nothing
-is hardcoded in `hardhat.config.js`.
+| Role | Contract operation | Purpose |
+| --- | --- | --- |
+| Supplier | `createProduct(productId, name, quantity)` | Creates a non-empty product with a positive quantity and unused ID. |
+| Warehouse | `recordWarehouseEntry(productId, warehouseId, quantity)` | Records full receipt while status is `Created`. |
+| Warehouse | `recordWarehouseExit(productId)` | Dispatches an in-warehouse product using its stored quantity. |
+| Transport | `recordPickup(productId, trackingNumber, driverId)` | Assigns a unique Tracking Number while status is `DispatchedFromWarehouse`. |
+| Transport | `updateTransportLocation(productId, location)` | Records a non-empty location and sets status to `InTransit`. |
+| Retailer | `confirmDelivery(productId, shopId, receivedQuantity)` | Confirms full delivery while status is `InTransit`; this sets terminal status `Delivered`. |
 
-```
-SEPOLIA_RPC_URL=...
-PRIVATE_KEY=...
-ETHERSCAN_API_KEY=...
-```
+The contract's read operations are:
 
----
+- `getProduct(productId)` — returns the current Product record.
+- `getProductIdByTrackingNumber(trackingNumber)` — resolves a Tracking Number to its Product ID.
 
-## Repository layout
+The append-only events used by the frontend history are:
 
-```
+| Event | Recorded information |
+| --- | --- |
+| `ProductCreated` | Product ID, supplier, name, quantity, timestamp |
+| `WarehouseEntry` | Product ID, staff account, warehouse reference, quantity, timestamp |
+| `WarehouseExit` | Product ID, staff account, stored quantity, timestamp |
+| `TransportPickup` | Product ID, transport account, Tracking Number, driver reference, timestamp |
+| `TransportStatusUpdated` | Product ID, Tracking Number, location, status, timestamp |
+| `GoodsDelivered` | Product ID, retailer account, store reference, quantity, timestamp |
+
+The contract has no on-chain `HistoryRecord[]`. Current status is updated in the Product record, while historical handoffs remain in blockchain event logs. Event data is publicly observable on a public network; the contract's `private` mappings are not a confidentiality mechanism.
+
+## 9. Project Structure
+
+```text
 supply-chain-blockchain/
-鈹溾攢鈹€ contracts/SupplyChain.sol          # fully implemented
-鈹溾攢鈹€ scripts/deploy.js                  # implemented (Phase 2)
-鈹溾攢鈹€ scripts/seed-demo-data.js          # implemented (Phase 2)
-鈹溾攢鈹€ test/                              # 5 contract test suites (Phase 2)
-鈹溾攢鈹€ frontend/src/                      # React application (Phase 2)
-鈹溾攢鈹€ hardhat.config.js
-鈹溾攢鈹€ package.json / package-lock.json
-鈹溾攢鈹€ .env.example
-鈹斺攢鈹€ README.md
+├─ contracts/
+│  └─ SupplyChain.sol
+├─ scripts/
+│  ├─ deploy.js
+│  └─ seed-demo-data.js
+├─ test/
+│  ├─ helpers.js
+│  ├─ SupplyChain.productFlow.test.js
+│  ├─ SupplyChain.quantityInvariants.test.js
+│  ├─ SupplyChain.roles.test.js
+│  ├─ SupplyChain.stateTransitions.test.js
+│  └─ SupplyChain.trackingNumber.test.js
+├─ frontend/
+│  ├─ src/
+│  │  ├─ components/
+│  │  ├─ config/deployment.json
+│  │  ├─ abi/SupplyChain.json
+│  │  ├─ services/
+│  │  └─ hooks/
+│  ├─ package.json
+│  └─ index.html
+├─ hardhat.config.js
+├─ package.json
+├─ package-lock.json
+├─ .env.example
+└─ README.md
 ```
 
-## Phase 2 operation
+The deployment script refreshes `frontend/src/config/deployment.json` and `frontend/src/abi/SupplyChain.json` for the deployed contract.
 
-The contract is unchanged from the approved Phase 1 implementation. The five
-Hardhat test suites, deployment/seed scripts, and React/ethers application are implemented.
-Use Node.js 22 and install root and frontend dependencies separately:
+## 10. Local Setup
 
-```sh
+### Prerequisites
+
+- Node.js 18 or newer and npm.
+- MetaMask connected to the local Hardhat network for browser write demonstrations.
+- PowerShell on Windows, or an equivalent shell for the same commands.
+
+Install dependencies separately for the root Hardhat project and the frontend:
+
+```powershell
+cd "D:\project\Block Chain\supply-chain-blockchain"
 npm install
-npx hardhat compile
-npx hardhat test
 cd frontend
 npm install
-npm test
-npm run build
+cd ..
 ```
 
-For a local demo, leave a node running in one terminal:
+Start the local system in this order.
 
-```sh
-npx hardhat node --hostname 127.0.0.1
+**Terminal 1 — start Hardhat Local and keep it running:**
+
+```powershell
+cd "D:\project\Block Chain\supply-chain-blockchain"
+npx hardhat node
 ```
 
-In another terminal, from the repository root:
+The local JSON-RPC endpoint is `http://127.0.0.1:8545` and the chain ID is `31337`.
 
-```sh
+**Terminal 2 — deploy and seed from the repository root:**
+
+```powershell
+cd "D:\project\Block Chain\supply-chain-blockchain"
 npm run deploy:local
 npm run seed:local
-cd frontend
+```
+
+**Terminal 3 — start the frontend:**
+
+```powershell
+cd "D:\project\Block Chain\supply-chain-blockchain\frontend"
 npm run dev
 ```
 
-Open the URL printed by Vite. Track Product ID `1001` or tracking number
-`DEMO-1001`; both show the same seven-event Delivered history. Connect MetaMask
-to localhost RPC `http://127.0.0.1:8545`, chain ID `31337`. Use the local node's
-first account as admin, then accounts 2鈥? as Supplier, Warehouse, Transport,
-and Retailer respectively. These disposable local accounts are for local demos.
-Create a fresh product ID to rehearse the full flow; the seeded product is terminal.
-After role grants/revocations use Refresh roles (account/chain changes also refresh).
-Disconnect from app clears app state; revoke site access in MetaMask if desired.
-Contract authorization remains authoritative even if a dashboard is stale.
+Open the URL printed by Vite, normally `http://127.0.0.1:5173`.
 
-Deployment writes `frontend/src/config/deployment.json` and the compiled ABI to
-`frontend/src/abi/SupplyChain.json`. Redeploy after resetting the local node;
-restart/rebuild the frontend after changing deployments or environment variables.
-Public searches use a JSON-RPC provider and work without MetaMask. History queries
-start at the deployment block, use 500-block requests, and sort by block,
-transaction index, and ethers v6 log `index`. State and history share a block
-snapshot. TransportStatusUpdated has no actor field in the approved event shape;
-its transaction hash is displayed for transaction-sender inspection.
+Hardhat Local state is ephemeral. Restarting the Hardhat node resets the chain, so deploy again and reseed before using the frontend or live integration test. Do not manually edit the generated deployment address or ABI after deployment.
 
-### Sepolia
+## 11. Demo Accounts
 
-Set root `.env`: `SEPOLIA_RPC_URL`, `PRIVATE_KEY` (admin), and the four distinct
-business-role keys listed in `.env.example`. Fund all five accounts with Sepolia
-ETH before seeding. Do not use real participant data. Then run:
+Hardhat provides disposable development accounts. The current local role mapping is:
 
-```sh
-npx hardhat run scripts/deploy.js --network sepolia
-npx hardhat run scripts/seed-demo-data.js --network sepolia
-```
+| Account | Development role |
+| --- | --- |
+| `#0` | Admin / deployer |
+| `#1` | Supplier |
+| `#2` | Warehouse |
+| `#3` | Transport |
+| `#4` | Retailer |
 
-Set `VITE_RPC_URL` in `frontend/.env` to a browser-accessible Sepolia endpoint,
-then run `npm run build` in `frontend`. Deployment exports chain 11155111 and its
-actual deployment block; never set that block to zero. Frontend env values are
-public and must contain no private keys. The script prints every transaction hash
-for Etherscan evidence. Re-seeding requires a new `DEMO_PRODUCT_ID`.
-Pre-seed before the presentation; reserve just one Sepolia write for the live demo.
-Sepolia deployment and real MetaMask signing require human-provided accounts and
-are distinct from the automated local verification.
+These accounts and their credentials are for local development only. Never use Hardhat development accounts or their known private keys with real funds or a real production network. Private keys are intentionally not included in this README.
 
-### Verification evidence
+## 12. Demo Seed Data
 
-See `verification/Phase2-results.md` for actual installation, compilation,
-contract tests/gas, frontend tests/build, deployment and seed output. To repeat
-the live frontend service test after local deployment/seeding, in PowerShell:
+[`scripts/seed-demo-data.js`](scripts/seed-demo-data.js) defaults to Product `1001` and Tracking Number `DEMO-1001`.
+
+The default seeded record is:
+
+| Field | Seeded value |
+| --- | --- |
+| Product ID | `1001` |
+| Name | `Classic Denim Jacket` |
+| Quantity | `10` |
+| Warehouse reference | `Auckland Clothing Distribution Centre` |
+| Driver reference | `DRV-DEMO-01` |
+| Locations | `Auckland Distribution Hub`, then `Auckland CBD` |
+| Store reference | `Queen Street Clothing Store` |
+| Final status | `Delivered` |
+
+This is demo/test data for the clothing scenario. It is useful for showing public tracking and the seven-event history, including two transport location updates. It is not the fresh clothing lifecycle used by the Phase 4 integration test.
+
+The seed script can take a different ID through `DEMO_PRODUCT_ID`, but a Product ID must not already exist on the deployment. A reset local node requires deployment and seeding again.
+
+## 13. Automated Testing
+
+### Hardhat contract tests
+
+From the repository root:
 
 ```powershell
-cd frontend
-$env:RUN_LOCAL_INTEGRATION='true'
 npm test
 ```
 
-Gas evidence can be regenerated from the root with `$env:REPORT_GAS='true'`
-followed by `npx hardhat test`. No fiat price service is needed for gas units.
+The root suite contains five test files covering:
 
+- the full separate-account lifecycle and duplicate Product ID protection,
+- quantity invariants,
+- role grants, revocations, and write authorization,
+- invalid status transitions and required fields,
+- Tracking Number assignment, lookup, and reuse protection.
+
+The verified root result is **76 passing tests**.
+
+### Frontend tests and live local integration
+
+From `frontend/`:
+
+```powershell
+cd frontend
+$env:RUN_LOCAL_INTEGRATION = 'true'
+npm test
+```
+
+With `RUN_LOCAL_INTEGRATION=true`, the three frontend test files cover React dashboard behavior, contract-service behavior, the seeded public tracking read, and the fresh Supplier → Warehouse → Transport → Retailer lifecycle. Hardhat Local must still be running, and the current deployment plus expected seed state must exist.
+
+The verified frontend baseline is:
+
+- **3 test files passed**
+- **18 tests passed**
+- **0 skipped**
+- **Full live local lifecycle passed**
+
+Without the environment variable, the live local integration file is skipped by its existing `skipIf` convention; the unit and component tests remain available.
+
+## 14. Production Build
+
+From `frontend/`:
+
+```powershell
+cd frontend
+npm run build
+```
+
+The verified production build completes successfully with Vite.
+
+## 15. Demonstration Flow
+
+For a short demonstration:
+
+1. Start Hardhat Local, deploy, seed, and start the frontend using the order in [Local Setup](#10-local-setup).
+2. In **Track Product**, search Product ID `1001` or Tracking Number `DEMO-1001`.
+3. Show the Product Overview, the six-stage Shipment Journey, and the ordered Event History.
+4. Explain that public tracking works without a wallet connection.
+5. Explain the role workflow and show the role-specific dashboard only if a write demonstration is needed.
+6. Refer to the automated live integration test for the complete fresh clothing lifecycle using generated identifiers and the separate role accounts.
+
+A long manual MetaMask account-switching demonstration is not required to verify the complete workflow; the live integration test exercises those role transitions automatically against the local blockchain.
+
+## 16. Scope and Limitations
+
+- This is an MVP for an academic project, not a production supply-chain platform.
+- Hardhat Local state is ephemeral and disappears when the node is restarted.
+- Browser write transactions require MetaMask, the correct network, and an account with the required role.
+- Role administration requires an authorized admin account; there is no custom participant-registration workflow.
+- The contract models one product as one shipment with one Tracking Number.
+- There are no partial shipments, multi-leg transport, returns, refunds, inventory management, e-commerce, or ERP features.
+- Delivered is terminal in the current contract.
+- Product state and event data are publicly readable on a public network; this MVP does not provide data confidentiality.
+- The repository makes no claim of production security, independent audit readiness, operational monitoring, or commercial scalability.
+
+## 17. Verified Baseline
+
+```text
+Branch:         ui-polish
+Stable commit:  54ac143
+
+Frontend:       18/18 passed
+Skipped:        0
+Live lifecycle: passed
+Build:          passed
+```
