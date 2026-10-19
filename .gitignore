@@ -28,3 +28,4 @@ frontend/build/
 .vscode/
 .idea/
 verification/
+/*.txt
