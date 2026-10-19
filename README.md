@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Clothing Supply Chain Tracker
 
 ## 1. Project Overview
@@ -347,3 +348,7 @@ Skipped:        0
 Live lifecycle: passed
 Build:          passed
 ```
+=======
+# ChainTrack-Supply-Chain
+A blockchain-based supply chain tracking prototype
+>>>>>>> 08e7b5e508bb95ba0e8f956ae8a3eefb46bae94b
