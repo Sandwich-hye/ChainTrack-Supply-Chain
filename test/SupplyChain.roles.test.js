@@ -23,16 +23,20 @@ describe('SupplyChain roles and access control', function () {
   for (let i = 0; i < steps.length; i++) {
     const [actor, method, args] = steps[i]; const roleName = `${actor.toUpperCase()}_ROLE`;
     it(`allows the correct role to ${method}`, async function () {
-      const f = await loadFixture(fixture); await advance(f, i - 1);
-      await expect(f.contract.connect(f[actor])[method](...args)).not.to.be.reverted;
+      const f = await loadFixture(fixture); await advance(f, i - 1); const values = [...args];
+      if (method === 'createProduct') values[3] = f.retailer.address;
+      if (method === 'recordWarehouseExit') values[1] = f.transport.address;
+      await expect(f.contract.connect(f[actor])[method](...values)).not.to.be.reverted;
     });
     it(`rejects every other role and revoked role for ${method}`, async function () {
-      const f = await loadFixture(fixture); await advance(f, i - 1); const role = await f.contract[roleName]();
+      const f = await loadFixture(fixture); await advance(f, i - 1); const role = await f.contract[roleName](); const values = [...args];
+      if (method === 'createProduct') values[3] = f.retailer.address;
+      if (method === 'recordWarehouseExit') values[1] = f.transport.address;
       for (const account of [f.admin, ...f.actors, f.outsider].filter(Boolean).filter(a => a.address !== f[actor].address)) {
-        await expect(f.contract.connect(account)[method](...args)).to.be.revertedWithCustomError(f.contract, 'AccessControlUnauthorizedAccount').withArgs(account.address, role);
+        await expect(f.contract.connect(account)[method](...values)).to.be.revertedWithCustomError(f.contract, 'AccessControlUnauthorizedAccount').withArgs(account.address, role);
       }
       await f.contract.revokeRole(role, f[actor].address);
-      await expect(f.contract.connect(f[actor])[method](...args)).to.be.revertedWithCustomError(f.contract, 'AccessControlUnauthorizedAccount').withArgs(f[actor].address, role);
+      await expect(f.contract.connect(f[actor])[method](...values)).to.be.revertedWithCustomError(f.contract, 'AccessControlUnauthorizedAccount').withArgs(f[actor].address, role);
     });
   }
 });

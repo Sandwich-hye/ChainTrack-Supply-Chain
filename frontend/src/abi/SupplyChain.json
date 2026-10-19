@@ -31,6 +31,50 @@
       "inputs": [
         {
           "indexed": true,
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "name": "BusinessNameSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "transport",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "driverId",
+          "type": "string"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "name": "DriverRegistered",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
           "internalType": "uint256",
           "name": "productId",
           "type": "uint256"
@@ -79,6 +123,12 @@
           "type": "address"
         },
         {
+          "indexed": true,
+          "internalType": "address",
+          "name": "destinationRetailer",
+          "type": "address"
+        },
+        {
           "indexed": false,
           "internalType": "string",
           "name": "name",
@@ -89,6 +139,12 @@
           "internalType": "uint256",
           "name": "quantity",
           "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "trackingNumber",
+          "type": "string"
         },
         {
           "indexed": false,
@@ -302,6 +358,12 @@
           "type": "address"
         },
         {
+          "indexed": true,
+          "internalType": "address",
+          "name": "assignedTransport",
+          "type": "address"
+        },
+        {
           "indexed": false,
           "internalType": "uint256",
           "name": "quantity",
@@ -385,6 +447,25 @@
     {
       "inputs": [
         {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "name": "businessNames",
+      "outputs": [
+        {
+          "internalType": "string",
+          "name": "",
+          "type": "string"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "uint256",
           "name": "productId",
           "type": "uint256"
@@ -421,11 +502,101 @@
           "internalType": "uint256",
           "name": "quantity",
           "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "destinationRetailer",
+          "type": "address"
         }
       ],
       "name": "createProduct",
       "outputs": [],
       "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "driverCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "driverId",
+          "type": "string"
+        }
+      ],
+      "name": "getDriver",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "string",
+              "name": "driverId",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "internalType": "address",
+              "name": "transport",
+              "type": "address"
+            }
+          ],
+          "internalType": "struct SupplyChain.Driver",
+          "name": "",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "transport",
+          "type": "address"
+        }
+      ],
+      "name": "getDrivers",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "string",
+              "name": "driverId",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "internalType": "address",
+              "name": "transport",
+              "type": "address"
+            }
+          ],
+          "internalType": "struct SupplyChain.Driver[]",
+          "name": "result",
+          "type": "tuple[]"
+        }
+      ],
+      "stateMutability": "view",
       "type": "function"
     },
     {
@@ -458,6 +629,16 @@
             {
               "internalType": "address",
               "name": "supplier",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "destinationRetailer",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "assignedTransport",
               "type": "address"
             },
             {
@@ -573,11 +754,6 @@
         },
         {
           "internalType": "string",
-          "name": "trackingNumber",
-          "type": "string"
-        },
-        {
-          "internalType": "string",
           "name": "driverId",
           "type": "string"
         }
@@ -616,9 +792,27 @@
           "internalType": "uint256",
           "name": "productId",
           "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "assignedTransport",
+          "type": "address"
         }
       ],
       "name": "recordWarehouseExit",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "name": "registerDriver",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -657,6 +851,37 @@
       "name": "revokeRole",
       "outputs": [],
       "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        },
+        {
+          "internalType": "string",
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "name": "setBusinessName",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "shipmentCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
       "type": "function"
     },
     {

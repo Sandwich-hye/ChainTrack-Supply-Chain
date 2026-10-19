@@ -8,55 +8,59 @@ The Clothing Supply Chain Tracker is a focused blockchain MVP for following one 
 Supplier → Warehouse → Transport → Retailer
 ```
 
-The React frontend reads the current product record and the ordered blockchain event history. Public visitors can search by Product ID or Tracking Number without connecting a wallet. Role holders can connect MetaMask to submit the operations allowed for their role.
+The React frontend reads the current product record and the ordered blockchain event history. Public visitors can track a shipment by its exact Tracking Number without connecting a wallet. Role holders can connect MetaMask to submit the operations allowed for their role.
 
 This is an academic-project-scale demonstration of a shared shipment record, not a commercial inventory or enterprise resource planning platform.
 
 ## 2. Why Clothing Supply Chain
 
-Clothing provides a concrete, easy-to-demonstrate shipment: a supplier registers a garment product, a warehouse receives and dispatches it, a transport role records movement, and a retailer confirms delivery. Product name, quantity, location, store reference, and shipment status make each handoff visible without requiring a larger business system.
+Clothing provides a concrete, easy-to-demonstrate shipment: a supplier registers a garment product, a warehouse receives and dispatches it, a transport role picks it up, and a retailer confirms delivery. Product name, quantity, store reference, and shipment status make each handoff visible without requiring a larger business system.
 
 ## 3. User Roles
 
 | Role | Current capabilities |
 | --- | --- |
-| **Admin** | Grants and revokes the four business roles for wallet accounts. The deploying account receives the contract's admin role. |
-| **Supplier** | Creates a product with a generated unused Product ID, name, and positive quantity, then reviews products created by the connected Supplier account in **My Products**. |
-| **Warehouse** | Records entry using the stored product quantity, then records warehouse exit. |
-| **Transport** | Records pickup with an automatically generated unused Tracking Number and driver reference, then records one or more location updates. |
-| **Retailer** | Confirms delivery using the product's stored quantity and a store reference. |
-| **Public viewer** | Searches by Product ID or Tracking Number and reads the current Product Overview, Shipment Journey, and Event History. A wallet is not required for public reads. |
+| **Admin** | Grants a business role and saves its Business / Account Name through one form with two wallet transactions. Existing names can be edited in the assignment table, and roles can be revoked there. The deploying account receives the contract's admin role. |
+| **Supplier** | Creates a product from a name, positive quantity, and destination Retailer. The internal Product ID is generated automatically and the contract issues the Tracking Number (for example `TRK-2026-000001`) at creation. Products created by the connected Supplier account appear in **My Products**. |
+| **Warehouse** | Discovers incoming Created shipments, records entry using the stored product quantity and its registered warehouse name, assigns a Transport account, then records warehouse exit. Multiple warehouse accounts can hold the role. |
+| **Transport** | Registers drivers under its own account, discovers shipments assigned to that account, and confirms pickup with one of its registered drivers; the shipment keeps the Tracking Number issued at creation. |
+| **Retailer** | Discovers incoming shipments assigned to the connected account and confirms delivery using the product's stored quantity and the store's automatic reference. |
+| **Public viewer** | Tracks a shipment by exact Tracking Number and reads the current Product Overview, Shipment Journey, and Event History. A wallet is not required for public reads. |
 
 The contract enforces write permissions with OpenZeppelin `AccessControl`. The frontend detects the connected account's roles and only renders the corresponding role dashboards.
 
+Account dropdowns read current role holders and names from the deployed contract. They include every authorized account, omit revoked accounts, and show a shortened address for an unnamed wallet. The Supplier selects a destination Retailer; the Warehouse selects a Transport account. There is no Warehouse selector because any authorized Warehouse may accept a Created shipment. The Transport dashboard's **My Drivers** section registers and lists drivers for the connected Transport wallet, and Pickup uses that same list.
+
 ## 4. Supply Chain Workflow
 
-The UI presents the six lifecycle stages as:
+The UI presents the five lifecycle stages as:
 
 ```text
-Created → In Warehouse → Dispatched → Picked Up → In Transit → Delivered
+Created → In Warehouse → Dispatched → Picked Up → Delivered
 ```
 
-1. **Created** — the Supplier registers a new product. The contract stores its name, quantity, supplier address, creation time, and initial status.
+1. **Created** — the Supplier registers a new product and destination Retailer. The contract stores its name, quantity, supplier and destination addresses, creation time, and initial status.
 2. **In Warehouse** — the Warehouse records receipt using the product's existing quantity. A partial or mismatched quantity is rejected.
-3. **Dispatched** — the Warehouse records exit. The contract uses the stored quantity and does not ask for a second quantity value.
-4. **Picked Up** — the Transport role assigns a unique Tracking Number and records the driver reference.
-5. **In Transit** — the Transport role records a location such as Auckland CBD. The contract permits another legitimate location update while the shipment is moving.
-6. **Delivered** — the Retailer confirms the full stored quantity and supplies a store reference. Delivered is terminal in this contract.
+3. **Dispatched** — the Warehouse assigns a Transport account and records exit. The contract uses the stored quantity and does not ask for a second quantity value.
+4. **Picked Up** — the assigned Transport account confirms pickup with the selected driver. The Tracking Number issued at creation is unchanged. The shipment then goes directly to the destination Retailer.
+5. **Delivered** — the destination Retailer confirms the full stored quantity. Delivered is terminal in this contract.
+
+The contract still contains a legacy `updateTransportLocation` operation (status `InTransit`). The frontend workflow does not use it, and delivery does not require it.
 
 ## 5. Main Features
 
 - Role-based blockchain operations for Admin, Supplier, Warehouse, Transport, and Retailer.
 - Automatic Product ID generation when Create Product is submitted, using secure browser randomness and an on-chain existence check. The ID is not a user input.
-- Automatic Tracking Number generation using the configured chain, contract, and product context, with an on-chain uniqueness check.
-- Product selection shared between Track Product and the role dashboards.
+- Human-readable Tracking Numbers (`TRK-2026-000001`, `TRK-2026-000002`, …) issued by the contract at product creation from an on-chain sequence. One Tracking Number follows the shipment through every stage.
+- Product selection shared between Track Shipment and the role dashboards.
+- Warehouse Incoming Shipments, Transport Assigned Shipments, and Retailer Incoming Deliveries reconstructed from blockchain events and current Product reads.
 - Supplier **My Products** list reconstructed from `ProductCreated` events and current Product reads.
 - Fresh on-chain product reads before role actions, so downstream quantity comes from the selected Product.
-- Product Overview showing Product ID, quantity, supplier, Tracking Number, and current status.
-- Shipment Journey showing the six lifecycle stages and the current stage number.
+- Product Details showing the Tracking Number, quantity, supplier, destination Retailer, Transport Company, and current status, with the internal Product ID under Technical Details.
+- Shipment Journey showing the five lifecycle stages and the current stage number.
 - Event History reconstructed from ordered contract events.
-- Search by Product ID.
-- Search by Tracking Number and resolution back to the Product ID.
+- Track Shipment by exact Tracking Number (trimmed and upper-cased before lookup).
+- A local filter on each role list (My Products, the active queues, and History) narrows the products already loaded for that role by Product Name or Tracking Number (case-insensitive, partial). It never searches beyond that role's own list.
 - Wallet, account, role, network, loading, error, and disconnection states.
 - Public tracking reads without requiring MetaMask.
 
@@ -89,8 +93,8 @@ A conventional database would be simpler for a single trusted organization. The 
 The contract is [`contracts/SupplyChain.sol`](contracts/SupplyChain.sol). It stores mutable current state in a `Product` struct:
 
 ```text
-productId, name, quantity, supplier, createdAt,
-currentStatus, trackingNumber
+productId, name, quantity, supplier, destinationRetailer,
+assignedTransport, createdAt, currentStatus, trackingNumber
 ```
 
 The Solidity enum names are:
@@ -108,26 +112,30 @@ Delivered
 
 | Role | Contract operation | Purpose |
 | --- | --- | --- |
-| Supplier | `createProduct(productId, name, quantity)` | Creates a non-empty product with a positive quantity and unused ID. |
+| Admin | `setBusinessName(account, name)` | Creates or edits a wallet's on-chain name. Unnamed wallets display a shortened address. |
+| Transport | `registerDriver(name)` | The contract generates a globally unique internal Driver ID owned by the calling Transport account. The UI shows the driver's name. |
+| Supplier | `createProduct(productId, name, quantity, destinationRetailer)` | Creates a non-empty product with a positive quantity, unused ID, and role-bearing destination Retailer, and assigns the next Tracking Number (`TRK-2026-` plus a six-digit sequence from `shipmentCount`). |
 | Warehouse | `recordWarehouseEntry(productId, warehouseId, quantity)` | Records full receipt while status is `Created`. |
-| Warehouse | `recordWarehouseExit(productId)` | Dispatches an in-warehouse product using its stored quantity. |
-| Transport | `recordPickup(productId, trackingNumber, driverId)` | Assigns a unique Tracking Number while status is `DispatchedFromWarehouse`. |
-| Transport | `updateTransportLocation(productId, location)` | Records a non-empty location and sets status to `InTransit`. |
-| Retailer | `confirmDelivery(productId, shopId, receivedQuantity)` | Confirms full delivery while status is `InTransit`; this sets terminal status `Delivered`. |
+| Warehouse | `recordWarehouseExit(productId, assignedTransport)` | Assigns a role-bearing Transport account and dispatches an in-warehouse product using its stored quantity. |
+| Transport | `recordPickup(productId, driverId)` | The assigned Transport account records one of its own registered drivers while status is `DispatchedFromWarehouse`. The Tracking Number is not changed. |
+| Transport | `updateTransportLocation(productId, location)` | Legacy, unused by the frontend. The assigned Transport account records a non-empty location and sets status to `InTransit`. |
+| Retailer | `confirmDelivery(productId, shopId, receivedQuantity)` | The destination Retailer confirms full delivery while status is `PickedUp` (or legacy `InTransit`); this sets terminal status `Delivered`. |
 
 The contract's read operations are:
 
 - `getProduct(productId)` — returns the current Product record.
 - `getProductIdByTrackingNumber(trackingNumber)` — resolves a Tracking Number to its Product ID.
+- `businessNames(account)` — reads a wallet's current registered name.
+- `getDrivers(transport)` and `getDriver(driverId)` — read transport-owned drivers.
 
 The append-only events used by the frontend history are:
 
 | Event | Recorded information |
 | --- | --- |
-| `ProductCreated` | Product ID, supplier, name, quantity, timestamp |
+| `ProductCreated` | Product ID, supplier, destination Retailer, name, quantity, Tracking Number, timestamp |
 | `WarehouseEntry` | Product ID, staff account, warehouse reference, quantity, timestamp |
-| `WarehouseExit` | Product ID, staff account, stored quantity, timestamp |
-| `TransportPickup` | Product ID, transport account, Tracking Number, driver reference, timestamp |
+| `WarehouseExit` | Product ID, staff account, assigned Transport, stored quantity, timestamp |
+| `TransportPickup` | Product ID, transport account, the existing Tracking Number, driver reference, timestamp |
 | `TransportStatusUpdated` | Product ID, Tracking Number, location, status, timestamp |
 | `GoodsDelivered` | Product ID, retailer account, store reference, quantity, timestamp |
 
@@ -213,7 +221,7 @@ npm run dev
 
 Open the URL printed by Vite, normally `http://127.0.0.1:5173`.
 
-Hardhat Local state is ephemeral. Restarting the Hardhat node resets the chain, so deploy again and reseed before using the frontend or live integration test. Do not manually edit the generated deployment address or ABI after deployment.
+Hardhat Local state is ephemeral. Restarting the Hardhat node resets the chain, so deploy again and reseed before using the frontend or live integration test. Do not manually edit the generated deployment address or ABI after deployment. Automatic driver ID generation changes the contract's `registerDriver` signature, so the frontend needs a new contract deployment. The old deployment and its data remain on the chain but are not copied to the new contract. `deploy:local` exports the current ABI and address; `seed:local` grants roles, sets demo names, registers the demo driver, and creates the sample shipment.
 
 ## 11. Demo Accounts
 
@@ -231,22 +239,22 @@ These accounts and their credentials are for local development only. Never use H
 
 ## 12. Demo Seed Data
 
-[`scripts/seed-demo-data.js`](scripts/seed-demo-data.js) defaults to Product `1001` and Tracking Number `DEMO-1001`.
+[`scripts/seed-demo-data.js`](scripts/seed-demo-data.js) defaults to Product `1001`. On a freshly deployed contract the seeded product receives Tracking Number `TRK-2026-000001` at creation.
 
 The default seeded record is:
 
 | Field | Seeded value |
 | --- | --- |
-| Product ID | `1001` |
+| Product ID (internal) | `1001` |
+| Tracking Number | `TRK-2026-000001` |
 | Name | `Classic Denim Jacket` |
 | Quantity | `10` |
 | Warehouse reference | `Auckland Clothing Distribution Centre` |
-| Driver reference | `DRV-DEMO-01` |
-| Locations | `Auckland Distribution Hub`, then `Auckland CBD` |
+| Driver | `John` (internal reference generated by the contract) |
 | Store reference | `Queen Street Clothing Store` |
 | Final status | `Delivered` |
 
-This is demo/test data for the clothing scenario. It is useful for showing public tracking and the seven-event history, including two transport location updates. It is not the fresh clothing lifecycle used by the Phase 4 integration test.
+This is demo/test data for the clothing scenario. It is useful for showing public tracking and the five-event history. It is not the fresh clothing lifecycle used by the Phase 4 integration test.
 
 The seed script can take a different ID through `DEMO_PRODUCT_ID`, but a Product ID must not already exist on the deployment. A reset local node requires deployment and seeding again.
 
@@ -260,15 +268,16 @@ From the repository root:
 npm test
 ```
 
-The root suite contains five test files covering:
+The root suite covers:
 
 - the full separate-account lifecycle and duplicate Product ID protection,
 - quantity invariants,
 - role grants, revocations, and write authorization,
 - invalid status transitions and required fields,
-- Tracking Number assignment, lookup, and reuse protection.
+- Tracking Number issue at creation, sequential uniqueness, preservation through pickup and delivery, and exact lookup.
+- admin-only account names, multiple warehouse names, unique driver registration, transport ownership, and pickup validation.
 
-The verified root result is **76 passing tests**.
+The verified root result is **85 passing tests**.
 
 ### Frontend tests and live local integration
 
@@ -285,7 +294,7 @@ With `RUN_LOCAL_INTEGRATION=true`, the three frontend test files cover React das
 The verified frontend baseline is:
 
 - **3 test files passed**
-- **18 tests passed**
+- **69 tests passed**
 - **0 skipped**
 - **Full live local lifecycle passed**
 
@@ -307,8 +316,8 @@ The verified production build completes successfully with Vite.
 For a short demonstration:
 
 1. Start Hardhat Local, deploy, seed, and start the frontend using the order in [Local Setup](#10-local-setup).
-2. In **Track Product**, search Product ID `1001` or Tracking Number `DEMO-1001`.
-3. Show the Product Overview, the six-stage Shipment Journey, and the ordered Event History.
+2. In **Track Shipment**, enter Tracking Number `TRK-2026-000001`.
+3. Show the Product Overview, the five-stage Shipment Journey, and the ordered Event History.
 4. Explain that public tracking works without a wallet connection.
 5. Explain the role workflow and show the role-specific dashboard only if a write demonstration is needed.
 6. Refer to the automated live integration test for the complete fresh clothing lifecycle using generated identifiers and the separate role accounts.

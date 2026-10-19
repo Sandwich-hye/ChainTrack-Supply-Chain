@@ -27,3 +27,4 @@ frontend/build/
 *.log
 .vscode/
 .idea/
+verification/

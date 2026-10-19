@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
 /**
  * @title SupplyChain
@@ -27,6 +28,10 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
  *
  *  - Scope: one product = one shipment = one tracking number. No partial
  *    shipments, no multi-leg transport. `Status.Delivered` is terminal.
+ *
+ *  - `productId` is the internal identifier used by every function. The
+ *    human-facing tracking number (e.g. TRK-2026-000001) is assigned once, by
+ *    `createProduct`, from an on-chain sequence and never changes afterwards.
  */
 contract SupplyChain is AccessControl {
     // ---------------------------------------------------------------------
@@ -58,6 +63,8 @@ contract SupplyChain is AccessControl {
         string name;
         uint256 quantity;
         address supplier;
+        address destinationRetailer;
+        address assignedTransport;
         uint256 createdAt;
         Status currentStatus;
         string trackingNumber;
@@ -68,6 +75,19 @@ contract SupplyChain is AccessControl {
     mapping(uint256 => bool) private productExists;
     mapping(bytes32 => uint256) private productIdByTrackingHash;
     mapping(bytes32 => bool) private trackingNumberUsed;
+    mapping(address => string) public businessNames;
+    struct Driver { string driverId; string name; address transport; }
+    mapping(bytes32 => Driver) private drivers;
+    mapping(address => bytes32[]) private driverIdsByTransport;
+    /// @notice Contract-wide sequence used to assign unique internal driver IDs.
+    uint256 public driverCount;
+
+    /// @notice Number of shipments created; the next shipment's tracking sequence is `shipmentCount + 1`.
+    uint256 public shipmentCount;
+
+    /// @dev Fixed demo year: calendar conversion from `block.timestamp` is out of scope for this MVP.
+    string private constant TRACKING_PREFIX = "TRK-2026-";
+    uint256 private constant TRACKING_DIGITS = 6;
 
     // ---------------------------------------------------------------------
     // Events — append-only historical audit trail
@@ -76,8 +96,10 @@ contract SupplyChain is AccessControl {
     event ProductCreated(
         uint256 indexed productId,
         address indexed supplier,
+        address indexed destinationRetailer,
         string name,
         uint256 quantity,
+        string trackingNumber,
         uint256 timestamp
     );
 
@@ -93,6 +115,7 @@ contract SupplyChain is AccessControl {
     event WarehouseExit(
         uint256 indexed productId,
         address indexed staff,
+        address indexed assignedTransport,
         uint256 quantity,
         uint256 timestamp
     );
@@ -120,6 +143,8 @@ contract SupplyChain is AccessControl {
         uint256 quantity,
         uint256 timestamp
     );
+    event BusinessNameSet(address indexed account, string name);
+    event DriverRegistered(address indexed transport, string driverId, string name);
 
     // ---------------------------------------------------------------------
     // Constructor
@@ -129,35 +154,73 @@ contract SupplyChain is AccessControl {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
+    function setBusinessName(address account, string calldata name) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(account != address(0), "Account required");
+        require(bytes(name).length > 0, "Business name required");
+        businessNames[account] = name;
+        emit BusinessNameSet(account, name);
+    }
+
+    function registerDriver(string calldata name) external onlyRole(TRANSPORT_ROLE) {
+        require(bytes(name).length > 0, "Driver name required");
+        string memory driverId = string.concat("DRV-", Strings.toString(++driverCount));
+        bytes32 key = keccak256(bytes(driverId));
+        drivers[key] = Driver(driverId, name, msg.sender);
+        driverIdsByTransport[msg.sender].push(key);
+        emit DriverRegistered(msg.sender, driverId, name);
+    }
+
+    function getDrivers(address transport) external view returns (Driver[] memory result) {
+        bytes32[] storage ids = driverIdsByTransport[transport];
+        result = new Driver[](ids.length);
+        for (uint256 i = 0; i < ids.length; i++) result[i] = drivers[ids[i]];
+    }
+
+    function getDriver(string calldata driverId) external view returns (Driver memory) {
+        return drivers[keccak256(bytes(driverId))];
+    }
+
     // ---------------------------------------------------------------------
     // State-changing functions
     // ---------------------------------------------------------------------
 
     /**
-     * @notice Supplier registers a new product / shipment.
-     * @dev Role: SUPPLIER_ROLE.
+     * @notice Supplier registers a new product / shipment and receives its tracking number.
+     * @dev Role: SUPPLIER_ROLE. The tracking number comes from the on-chain sequence,
+     *      so it is unique without any caller input.
      */
     function createProduct(
         uint256 productId,
         string calldata name,
-        uint256 quantity
+        uint256 quantity,
+        address destinationRetailer
     ) external onlyRole(SUPPLIER_ROLE) {
         require(!productExists[productId], "Product already exists");
         require(quantity > 0, "Quantity must be greater than zero");
         require(bytes(name).length > 0, "Name required");
+        require(destinationRetailer != address(0), "Destination retailer required");
+        require(hasRole(RETAILER_ROLE, destinationRetailer), "Destination retailer lacks role");
+
+        shipmentCount += 1;
+        string memory trackingNumber = _formatTrackingNumber(shipmentCount);
+        bytes32 trackingHash = keccak256(bytes(trackingNumber));
 
         products[productId] = Product({
             productId: productId,
             name: name,
             quantity: quantity,
             supplier: msg.sender,
+            destinationRetailer: destinationRetailer,
+            assignedTransport: address(0),
             createdAt: block.timestamp,
             currentStatus: Status.Created,
-            trackingNumber: ""
+            trackingNumber: trackingNumber
         });
         productExists[productId] = true;
+        trackingNumberUsed[trackingHash] = true;
+        productIdByTrackingHash[trackingHash] = productId;
 
-        emit ProductCreated(productId, msg.sender, name, quantity, block.timestamp);
+        emit ProductCreated(productId, msg.sender, destinationRetailer, name, quantity, trackingNumber, block.timestamp);
     }
 
     /**
@@ -186,23 +249,25 @@ contract SupplyChain is AccessControl {
      * @dev Role: WAREHOUSE_ROLE. No warehouseId / quantity are re-supplied — the
      *      stored product quantity is emitted.
      */
-    function recordWarehouseExit(uint256 productId) external onlyRole(WAREHOUSE_ROLE) {
+    function recordWarehouseExit(uint256 productId, address assignedTransport) external onlyRole(WAREHOUSE_ROLE) {
         require(productExists[productId], "Product does not exist");
         Product storage product = products[productId];
         require(product.currentStatus == Status.InWarehouse, "Invalid status for warehouse exit");
+        require(assignedTransport != address(0), "Assigned transport required");
+        require(hasRole(TRANSPORT_ROLE, assignedTransport), "Assigned transport lacks role");
 
+        product.assignedTransport = assignedTransport;
         product.currentStatus = Status.DispatchedFromWarehouse;
 
-        emit WarehouseExit(productId, msg.sender, product.quantity, block.timestamp);
+        emit WarehouseExit(productId, msg.sender, assignedTransport, product.quantity, block.timestamp);
     }
 
     /**
      * @notice Transport company records pickup of a dispatched shipment.
-     * @dev Role: TRANSPORT_ROLE. Assigns a globally-unique tracking number.
+     * @dev Role: TRANSPORT_ROLE. The shipment keeps the tracking number assigned at creation.
      */
     function recordPickup(
         uint256 productId,
-        string calldata trackingNumber,
         string calldata driverId
     ) external onlyRole(TRANSPORT_ROLE) {
         require(productExists[productId], "Product does not exist");
@@ -211,18 +276,13 @@ contract SupplyChain is AccessControl {
             product.currentStatus == Status.DispatchedFromWarehouse,
             "Invalid status for pickup"
         );
-        require(bytes(trackingNumber).length > 0, "Tracking number required");
+        require(msg.sender == product.assignedTransport, "Not assigned transport");
         require(bytes(driverId).length > 0, "Driver ID required");
-
-        bytes32 trackingHash = keccak256(bytes(trackingNumber));
-        require(!trackingNumberUsed[trackingHash], "Tracking number already used");
+        require(drivers[keccak256(bytes(driverId))].transport == msg.sender, "Driver not registered to transport");
 
         product.currentStatus = Status.PickedUp;
-        product.trackingNumber = trackingNumber;
-        trackingNumberUsed[trackingHash] = true;
-        productIdByTrackingHash[trackingHash] = productId;
 
-        emit TransportPickup(productId, msg.sender, trackingNumber, driverId, block.timestamp);
+        emit TransportPickup(productId, msg.sender, product.trackingNumber, driverId, block.timestamp);
     }
 
     /**
@@ -240,6 +300,7 @@ contract SupplyChain is AccessControl {
             product.currentStatus == Status.PickedUp || product.currentStatus == Status.InTransit,
             "Invalid status for location update"
         );
+        require(msg.sender == product.assignedTransport, "Not assigned transport");
         require(bytes(location).length > 0, "Location required");
 
         product.currentStatus = Status.InTransit;
@@ -264,13 +325,29 @@ contract SupplyChain is AccessControl {
     ) external onlyRole(RETAILER_ROLE) {
         require(productExists[productId], "Product does not exist");
         Product storage product = products[productId];
-        require(product.currentStatus == Status.InTransit, "Invalid status for delivery");
+        require(
+            product.currentStatus == Status.PickedUp || product.currentStatus == Status.InTransit,
+            "Invalid status for delivery"
+        );
+        require(msg.sender == product.destinationRetailer, "Not destination retailer");
         require(receivedQuantity == product.quantity, "Quantity mismatch");
         require(bytes(shopId).length > 0, "Shop ID required");
 
         product.currentStatus = Status.Delivered;
 
         emit GoodsDelivered(productId, msg.sender, shopId, receivedQuantity, block.timestamp);
+    }
+
+    // ---------------------------------------------------------------------
+    // Internal helpers
+    // ---------------------------------------------------------------------
+
+    /// @dev Formats a sequence as TRK-2026-000001; sequences beyond 999999 keep all their digits.
+    function _formatTrackingNumber(uint256 sequence) private pure returns (string memory) {
+        bytes memory digits = bytes(Strings.toString(sequence));
+        bytes memory padding = new bytes(digits.length < TRACKING_DIGITS ? TRACKING_DIGITS - digits.length : 0);
+        for (uint256 i = 0; i < padding.length; i++) padding[i] = "0";
+        return string.concat(TRACKING_PREFIX, string(padding), string(digits));
     }
 
     // ---------------------------------------------------------------------

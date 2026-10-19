@@ -1,4 +1,4 @@
-﻿import { BrowserProvider, JsonRpcProvider, Contract, Interface, ZeroHash, id, isAddress, MaxUint256 } from 'ethers';
+import { BrowserProvider, JsonRpcProvider, Contract, Interface, ZeroHash, id, isAddress, MaxUint256 } from 'ethers';
 import artifact from '../abi/SupplyChain.json';
 import deployment from '../config/deployment.json';
 const env = import.meta.env || {};
@@ -7,6 +7,18 @@ export const CONTRACT_ADDRESS = env.VITE_CONTRACT_ADDRESS || deployment.address;
 export const CHAIN_ID = Number(env.VITE_CHAIN_ID || deployment.chainId);
 export const DEPLOYMENT_BLOCK = Number(env.VITE_DEPLOYMENT_BLOCK ?? deployment.deploymentBlock);
 export const BUSINESS_ROLES = ['Supplier','Warehouse','Transport','Retailer'];
+export function businessName(address,names = {}) { return names[String(address || '').toLowerCase()] || (isAddress(address) ? shortAddress(address) : address); }
+// Display-only middle truncation for long IDs and addresses; never pass the result to the contract.
+export function shortenMiddle(value, head = 8, tail = 6) {
+  const text = String(value ?? '');
+  return text.length > head + tail + 1 ? `${text.slice(0,head)}…${text.slice(-tail)}` : text;
+}
+export const shortAddress = address => shortenMiddle(address,6,4);
+export function accountLabel(address,names = {}) {
+  const name = names[String(address || '').toLowerCase()];
+  return name ? `${name} · ${shortAddress(address)}` : shortAddress(address);
+}
+export function driverName(driverId,names = {}) { return names[driverId] || 'Driver name unavailable'; }
 export const ROLE_IDS = Object.fromEntries(['Admin',...BUSINESS_ROLES].map(role => [role,role === 'Admin' ? ZeroHash : id(`${role.toUpperCase()}_ROLE`)]));
 export const STATUSES = ['Created','In Warehouse','Dispatched','Picked Up','In Transit','Delivered'];
 export const EVENTS = ['ProductCreated','WarehouseEntry','WarehouseExit','TransportPickup','TransportStatusUpdated','GoodsDelivered'];
@@ -25,6 +37,9 @@ export function uint(value, label = 'Product ID', positive = false) {
 function hasRevertReason(error, reason) {
   return [error?.reason, error?.shortMessage, error?.message].some(value => typeof value === 'string' && value.includes(reason));
 }
+async function latestBlock(provider) {
+  return provider.send ? Number(BigInt(await provider.send('eth_blockNumber',[]))) : provider.getBlockNumber();
+}
 export async function generateProductId(contract, random = globalThis.crypto) {
   contract ||= await getReadContract();
   if (!random?.getRandomValues) throw new Error('Secure browser randomness is unavailable.');
@@ -40,30 +55,105 @@ export async function generateProductId(contract, random = globalThis.crypto) {
   }
   throw new Error('Could not find an unused Product ID. Try again.');
 }
-export async function generateTrackingNumber(productId, contract) {
-  contract ||= await getReadContract();
-  const base = `SC-${CHAIN_ID}-${CONTRACT_ADDRESS.slice(2,10).toUpperCase()}-${uint(productId).toString()}`;
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const candidate = attempt ? `${base}-${attempt + 1}` : base;
-    try { await contract.getProductIdByTrackingNumber(candidate); }
-    catch (error) {
-      if (hasRevertReason(error, 'Unknown tracking number')) return candidate;
-      throw error;
-    }
+// Tracking numbers are issued on-chain in upper case (TRK-2026-000001); lookups are exact after trimming and upper-casing.
+export const normalizeTrackingNumber = value => String(value ?? '').trim().toUpperCase();
+export function trackingNumberFromReceipt(receipt) {
+  const iface = new Interface(ABI);
+  for (const log of receipt?.logs || []) {
+    try { const parsed = iface.parseLog(log); if (parsed?.name === 'ProductCreated') return parsed.args.trackingNumber; } catch { /* not a SupplyChain log */ }
   }
-  throw new Error('Could not find an unused tracking number. Try again.');
+  return '';
 }
 export async function listSupplierProducts(supplier, contract, fromBlock = DEPLOYMENT_BLOCK, toBlock) {
   contract ||= await getReadContract();
-  const end = toBlock ?? await contract.runner.provider.getBlockNumber();
+  const end = toBlock ?? await latestBlock(contract.runner.provider);
   const logs = [];
-  const filter = contract.filters.ProductCreated(null,supplier);
+  const filter = contract.filters.ProductCreated(null,supplier,null);
   for (let start = fromBlock; start <= end; start += 500) {
     const stop = Math.min(start + 499,end);
     logs.push(...await contract.queryFilter(filter,start,stop));
   }
   const productIds = [...new Set(logs.sort(compareLogs).map(log => log.args.productId.toString()))];
   return Promise.all(productIds.map(productId => contract.getProduct(BigInt(productId),{blockTag:end})));
+}
+async function productsFromLogs(logs, contract, end, predicate) {
+  const productIds = [...new Set(logs.sort(compareLogs).map(log => log.args.productId.toString()))];
+  const products = await Promise.all(productIds.map(productId => contract.getProduct(BigInt(productId),{blockTag:end})));
+  return products.filter(predicate);
+}
+async function queryProductLogs(contract, filter, fromBlock, end) {
+  const logs = [];
+  for (let start = fromBlock; start <= end; start += 500) {
+    const stop = Math.min(start + 499,end);
+    logs.push(...await contract.queryFilter(filter,start,stop));
+  }
+  return logs;
+}
+export async function listWarehouseProducts(contract, fromBlock = DEPLOYMENT_BLOCK, toBlock) {
+  contract ||= await getReadContract();
+  const end = toBlock ?? await latestBlock(contract.runner.provider);
+  return productsFromLogs(await queryProductLogs(contract,contract.filters.ProductCreated(),fromBlock,end),contract,end,p => [0,1].includes(Number(p.currentStatus)));
+}
+export async function listTransportProducts(transport, contract, fromBlock = DEPLOYMENT_BLOCK, toBlock) {
+  contract ||= await getReadContract();
+  const end = toBlock ?? await latestBlock(contract.runner.provider);
+  return productsFromLogs(await queryProductLogs(contract,contract.filters.WarehouseExit(null,null,transport),fromBlock,end),contract,end,p => [2,3,4].includes(Number(p.currentStatus)) && p.assignedTransport.toLowerCase() === transport.toLowerCase());
+}
+export async function listRetailerProducts(retailer, contract, fromBlock = DEPLOYMENT_BLOCK, toBlock) {
+  contract ||= await getReadContract();
+  const end = toBlock ?? await latestBlock(contract.runner.provider);
+  return productsFromLogs(await queryProductLogs(contract,contract.filters.ProductCreated(null,null,retailer),fromBlock,end),contract,end,p => Number(p.currentStatus) !== 5 && p.destinationRetailer.toLowerCase() === retailer.toLowerCase());
+}
+// Role queues plus role history, read at one block. Active and history use disjoint status sets, so no shipment is in both.
+const sameAccount = (a,b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
+const byStatus = statuses => product => statuses.includes(Number(product.currentStatus));
+export async function listWarehouseShipments(warehouse, contract, fromBlock = DEPLOYMENT_BLOCK, toBlock) {
+  contract ||= await getReadContract();
+  const end = toBlock ?? await latestBlock(contract.runner.provider);
+  const [created,entries] = await Promise.all([queryProductLogs(contract,contract.filters.ProductCreated(),fromBlock,end),queryProductLogs(contract,contract.filters.WarehouseEntry(null,warehouse),fromBlock,end)]);
+  
+  const products = await productsFromLogs([...created,...entries],contract,end,() => true);
+  const createdIds = new Set(created.map(log => log.args.productId.toString()));
+  const entryIds = new Set(entries.map(log => log.args.productId.toString()));
+  const active = products.filter(product => (createdIds.has(product.productId.toString()) && Number(product.currentStatus) === 0) || (entryIds.has(product.productId.toString()) && Number(product.currentStatus) === 1));
+  const history = products.filter(product => entryIds.has(product.productId.toString()) && [2,3,4,5].includes(Number(product.currentStatus)));
+  return {active,history};
+}
+export async function listTransportShipments(transport, contract, fromBlock = DEPLOYMENT_BLOCK, toBlock) {
+  contract ||= await getReadContract();
+  const end = toBlock ?? await latestBlock(contract.runner.provider);
+  const assigned = await productsFromLogs(await queryProductLogs(contract,contract.filters.WarehouseExit(null,null,transport),fromBlock,end),contract,end,p => sameAccount(p.assignedTransport,transport));
+  return {active:assigned.filter(byStatus([2,3,4])),history:assigned.filter(byStatus([5]))};
+}
+export async function listRetailerShipments(retailer, contract, fromBlock = DEPLOYMENT_BLOCK, toBlock) {
+  contract ||= await getReadContract();
+  const end = toBlock ?? await latestBlock(contract.runner.provider);
+  const destined = await productsFromLogs(await queryProductLogs(contract,contract.filters.ProductCreated(null,null,retailer),fromBlock,end),contract,end,p => sameAccount(p.destinationRetailer,retailer));
+  return {active:destined.filter(byStatus([0,1,2,3,4])),history:destined.filter(byStatus([5]))};
+}
+// Current business-role holders: candidates come from AccessControl RoleGranted/RoleRevoked events, then hasRole confirms each at one block.
+export async function listRoleAssignments(contract, fromBlock = DEPLOYMENT_BLOCK, toBlock) {
+  contract ||= await getReadContract();
+  const end = toBlock ?? await latestBlock(contract.runner.provider);
+  const logs = [...await queryProductLogs(contract,contract.filters.RoleGranted(),fromBlock,end),...await queryProductLogs(contract,contract.filters.RoleRevoked(),fromBlock,end)].sort(compareLogs);
+  const roleById = Object.fromEntries(BUSINESS_ROLES.map(role => [ROLE_IDS[role].toLowerCase(),role]));
+  const candidates = Object.fromEntries(BUSINESS_ROLES.map(role => [role,[]]));
+  for (const log of logs) {
+    const role = roleById[String(log.args.role).toLowerCase()];
+    if (role && !candidates[role].some(account => account.toLowerCase() === log.args.account.toLowerCase())) candidates[role].push(log.args.account);
+  }
+  return Object.fromEntries(await Promise.all(BUSINESS_ROLES.map(async role => {
+    const held = await Promise.all(candidates[role].map(account => contract.hasRole(ROLE_IDS[role],account,{blockTag:end})));
+    return [role,candidates[role].filter((_,index) => held[index])];
+  })));
+}
+export async function loadBusinessNames(addresses, contract) {
+  contract ||= await getReadContract();
+  return Object.fromEntries(await Promise.all([...new Set(addresses.map(address => address.toLowerCase()))].map(async address => [address,await contract.businessNames(address)])));
+}
+export async function listDrivers(transport,contract) {
+  contract ||= await getReadContract();
+  return contract.getDrivers(transport);
 }
 export async function getProvider() {
   if (!window.ethereum) throw new Error('Install MetaMask to connect a wallet.');
@@ -100,7 +190,7 @@ export async function detectRoles(contract,address) {
 }
 export function compareLogs(a,b) { return a.blockNumber-b.blockNumber || a.transactionIndex-b.transactionIndex || a.index-b.index; }
 export async function queryHistory(contract,productId,fromBlock = DEPLOYMENT_BLOCK,toBlock) {
-  const end = toBlock ?? await contract.runner.provider.getBlockNumber();
+  const end = toBlock ?? await latestBlock(contract.runner.provider);
   const logs = [];
   // Bounded requests also work with public RPC providers that cap eth_getLogs ranges.
   for (let start = fromBlock; start <= end; start += 500) {
@@ -114,8 +204,8 @@ export async function queryHistory(contract,productId,fromBlock = DEPLOYMENT_BLO
 }
 export async function trackProduct(mode,query,contract,fromBlock = DEPLOYMENT_BLOCK) {
   contract ||= await getReadContract();
-  const productId = mode === 'trackingNumber' ? await contract.getProductIdByTrackingNumber(query.trim()) : uint(query.trim());
-  const blockTag = await contract.runner.provider.getBlockNumber();
+  const productId = mode === 'trackingNumber' ? await contract.getProductIdByTrackingNumber(normalizeTrackingNumber(query)) : uint(String(query).trim());
+  const blockTag = await latestBlock(contract.runner.provider);
   const product = await contract.getProduct(productId,{blockTag});
   const timeline = await queryHistory(contract,productId,fromBlock,blockTag);
   return { product, timeline };
@@ -128,12 +218,13 @@ export function toReadableError(error) {
   try { if (typeof data === 'string' && new Interface(ABI).parseError(data)?.name === 'AccessControlUnauthorizedAccount') return 'This account does not have the required role.'; } catch { /* retain original message */ }
   if (/AccessControlUnauthorizedAccount/.test(message)) return 'This account does not have the required role.';
   const messages = {
-    'Product does not exist':'Product not found. Check the Product ID.',
+    'Product does not exist':'Product not found.',
     'Product already exists':'This Product ID is already registered.',
     'Quantity must be greater than zero':'Quantity must be greater than zero.',
     'Quantity mismatch':'Quantity must match the original product quantity.',
-    'Tracking number already used':'This tracking number is already assigned to a product.',
-    'Unknown tracking number':'Tracking number not found.',
+    'Unknown tracking number':'No shipment found for this tracking number.',
+    'Driver ID required':'Select a driver before confirming pickup.',
+    'Driver not registered to transport':'Select a driver registered to this Transport account.',
   };
   for (const [reason,text] of Object.entries(messages)) if (message.includes(reason)) return text;
   if (/Invalid status/.test(message)) return 'This action is not allowed at the current lifecycle stage. Check the product timeline.';

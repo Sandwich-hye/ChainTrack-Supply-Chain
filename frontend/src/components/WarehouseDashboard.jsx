@@ -1,13 +1,27 @@
 import React from 'react';
 import TransactionForm from './TransactionForm';
-import ProductOverview from './ProductOverview';
-import { requireFreshProduct } from '../services/contractService';
+import { ShipmentQueues } from './ProductList';
+import { ActionNotice, useActionFeedback } from './ActionFeedback';
+import { businessName, listWarehouseShipments, requireFreshProduct } from '../services/contractService';
+import { useDirectory, useRoleOptions } from '../services/directory';
 
-export default function WarehouseDashboard({address,selectedProduct,refreshProduct,contextKey}) {
-  const product = selectedProduct?.product;
-  const refresh = () => product && refreshProduct(product.productId,contextKey);
-  return <section className="dashboard"><p className="eyebrow">Clothing warehouse</p><h2>Warehouse operations</h2><p className="muted">Receive and dispatch the selected shipment.</p>
-    {!product ? <p className="empty-state">Search and select a product above to begin.</p> : <><ProductOverview product={product} title="Current Product"/>
-      <div className="form-grid">{Number(product.currentStatus) === 0 && <TransactionForm address={address} title="Confirm Warehouse Entry" description="Confirm the complete expected quantity was physically received." method="recordWarehouseEntry" generatedFields={[{label:'Expected Quantity',value:product.quantity.toString()}]} fields={[{name:'warehouseId',label:'Warehouse Reference',placeholder:'Auckland Clothing Distribution Centre'}]} confirmation="I confirm the full expected quantity was physically received." prepare={async args => { const fresh = await requireFreshProduct(selectedProduct,[0]); return [fresh.productId,args[0],fresh.quantity]; }} onSuccess={refresh}/>} {Number(product.currentStatus) === 1 && <TransactionForm address={address} title="Record Warehouse Exit" description="Dispatch the selected shipment from the warehouse." method="recordWarehouseExit" fields={[]} prepare={async () => { const fresh = await requireFreshProduct(selectedProduct,[1]); return [fresh.productId]; }} onSuccess={refresh}/>} {[2,3,4,5].includes(Number(product.currentStatus)) && <p className="muted">Waiting for the next supply-chain role.</p>}</div></>}
+export default function WarehouseDashboard({address,selectedProduct,selectProduct,contextKey,revision = ''}) {
+  return <section className="dashboard"><h2>Warehouse</h2>
+    <ShipmentQueues activeTitle="Incoming Shipments" activeEmpty="No incoming shipments" load={address ? () => listWarehouseShipments(address) : null} loadKey={`${address}|${contextKey}|${revision}`} selectedProduct={selectedProduct} selectProduct={selectProduct} contextKey={contextKey}/>
   </section>;
+}
+
+export function WarehouseActions({address,selectedProduct,refreshProduct,contextKey}) {
+  const {names} = useDirectory();
+  const transports = useRoleOptions('Transport');
+  const warehouseReference = businessName(address,names);
+  const product = selectedProduct?.product;
+  const [notice,complete] = useActionFeedback(product,refreshProduct,contextKey);
+  if (!product) return null;
+  const status = Number(product.currentStatus);
+  return <>
+    <ActionNotice text={notice}/>
+    {status === 0 && <TransactionForm address={address} title="Confirm Warehouse Entry" successMessage="Warehouse entry recorded" method="recordWarehouseEntry" generatedFields={[{label:'Expected Quantity',value:product.quantity.toString()},{label:'Warehouse Reference',value:warehouseReference}]} fields={[]} prepare={async () => { const fresh = await requireFreshProduct(selectedProduct,[0]); return [fresh.productId,warehouseReference,fresh.quantity]; }} onSuccess={complete('Warehouse entry recorded')}/>}
+    {status === 1 && <>{transports.error && <p role="status" className="notice-warning">{transports.error}</p>}{!transports.loading && !transports.error && !transports.options.length && <p className="list-empty">No authorized Transport accounts. Ask an admin to grant the Transport role.</p>}<TransactionForm address={address} title="Dispatch Shipment" successMessage="Shipment dispatched" method="recordWarehouseExit" fields={[{name:'assignedTransport',label:'Transport Company',options:transports.options,emptyOption:transports.loading ? 'Loading transports…' : transports.error ? 'Directory unavailable' : 'No authorized transports'}]} prepare={async args => { const fresh = await requireFreshProduct(selectedProduct,[1]); return [fresh.productId,args[0]]; }} onSuccess={complete('Shipment dispatched')}/></>}
+  </>;
 }

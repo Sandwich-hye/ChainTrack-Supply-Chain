@@ -5,14 +5,16 @@ export function useWallet() {
   const generation = useRef(0); const disconnected = useRef(false);
   const refresh = useCallback(async (request = false) => {
     const ticket = ++generation.current;
-    setState(s => ({...s,roles:[],busy:true,error:''}));
+    // Keep the current account's panels mounted while its roles are refreshed so
+    // transaction feedback is not discarded between confirmation and notification.
+    setState(s => ({...s,busy:true,error:''}));
     try {
       if (!window.ethereum) throw new Error('Install MetaMask to connect a wallet.');
       const accounts = await window.ethereum.request({method:request ? 'eth_requestAccounts' : 'eth_accounts'});
       const chainId = Number(await window.ethereum.request({method:'eth_chainId'}));
       const address = accounts[0] || null;
       if (ticket !== generation.current) return;
-      setState({address,chainId,roles:[],busy:true,error:''});
+      setState(s => ({address,chainId,roles:s.address?.toLowerCase() === address?.toLowerCase() && s.chainId === chainId ? s.roles : [],busy:true,error:''}));
       if (address && chainId !== CHAIN_ID) throw new Error(`Wrong network: switch MetaMask to chain ${CHAIN_ID}.`);
       const roles = address ? await detectRoles(await getWriteContract(address),address) : [];
       if (ticket === generation.current) setState({address,chainId,roles,error:'',busy:false});
